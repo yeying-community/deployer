@@ -184,7 +184,9 @@ target_secrets_paths=$(resolve_secrets_paths "${target_dir}/config.js" "$target_
 target_secrets_file=$(printf '%s\n' "$target_secrets_paths" | sed -n '1p')
 target_secrets_password_file=$(printf '%s\n' "$target_secrets_paths" | sed -n '2p')
 
-if [[ -f "$current_secrets_password_file" ]]; then
+if [[ "$current_secrets_password_file" == "$target_secrets_password_file" ]]; then
+    log "skip copying secrets.passwordFile, source and target are the same file: ${current_secrets_password_file}"
+elif [[ -f "$current_secrets_password_file" ]]; then
     mkdir -p "$(dirname "$target_secrets_password_file")"
     cp -pf "$current_secrets_password_file" "$target_secrets_password_file" || {
         log "ERROR! failed to copy secrets.passwordFile: ${current_secrets_password_file} -> ${target_secrets_password_file}"
