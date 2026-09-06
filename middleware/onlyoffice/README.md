@@ -19,8 +19,21 @@ cp .env.template .env
 修改 `.env`，至少替换 JWT 密钥：
 
 ```dotenv
-ONLYOFFICE_JWT_SECRET=replace-with-a-long-random-secret
+# 使用 base64:<Base64 编码随机值> 格式的 JWT 密钥
+ONLYOFFICE_JWT_SECRET=base64:xpNmD8Fm87v8CabmO1wfA4gvNVYa9aDmtQL8afQhPHY=
 ```
+
+JWT 密钥可以使用 OpenSSL 生成。下面的命令会生成 32 个随机字节，并以
+`base64:<Base64 编码值>` 格式输出：
+
+```bash
+printf 'base64:%s\n' "$(openssl rand -base64 32)"
+```
+
+将命令输出的完整内容（包括 `base64:` 前缀）写入 `.env` 的
+`ONLYOFFICE_JWT_SECRET`。`base64:` 是格式前缀，后面的内容是 Base64 编码的
+随机密钥；Project 侧必须配置完全相同的字符串。示例值仅用于说明格式，生产环境
+请使用命令重新生成，并不要将真实密钥提交到 Git 仓库。
 
 启动服务：
 
@@ -52,8 +65,9 @@ ONLYOFFICE_VERSION=8.2
 ONLYOFFICE_BIND_ADDRESS=127.0.0.1
 ONLYOFFICE_PORT=18088
 
-# OnlyOffice JWT 配置，Project 侧必须使用相同密钥
-ONLYOFFICE_JWT_SECRET=replace-with-a-long-random-secret
+# OnlyOffice JWT 配置，密钥必须使用 base64:<Base64 编码随机值> 格式，
+# 且 Project 侧必须使用完全相同的字符串。
+ONLYOFFICE_JWT_SECRET=base64:xpNmD8Fm87v8CabmO1wfA4gvNVYa9aDmtQL8afQhPHY=
 ONLYOFFICE_JWT_HEADER=Authorization
 ONLYOFFICE_JWT_IN_BODY=true
 ```
