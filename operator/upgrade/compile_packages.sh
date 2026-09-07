@@ -1,6 +1,13 @@
 #!/usr/bin/env bash
 # check module code status, build package if needed, then upload with retry
 
+# Load host-managed environment first so cron/systemd executions inherit
+# configured tool paths such as Maven from /etc/profile.
+if [[ -f /etc/profile ]]; then
+    # shellcheck disable=SC1091
+    source /etc/profile >/dev/null 2>&1 || true
+fi
+
 set -euo pipefail
 shopt -s nullglob
 
@@ -14,7 +21,7 @@ if [[ -f "$feishu_common_sh" ]]; then
 fi
 
 # Keep a deterministic baseline PATH for non-login shells (cron/systemd),
-# but preserve any existing entries such as nvm-installed CLIs.
+# while preserving profile-provided entries such as Maven and nvm CLIs.
 export PATH="/usr/local/go/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin${PATH:+:${PATH}}"
 
 init_log_file "check-code-status.log"
