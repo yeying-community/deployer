@@ -1,0 +1,20 @@
+{
+  "timezone": "Asia/Shanghai",
+  "deploy_root": "/opt/deploy",
+  "modules_file": "/root/code/deployer/operator/analyer/modules.conf",
+  "error_log_name": "logs/error.log",
+  "state_db": "/root/code/deployer/operator/analyer/state.db",
+  "results_dir": "/root/code/deployer/operator/analyer/results",
+  "work_dir": "/root/code/deployer/operator/analyer/work",
+  "prompt_file": "/root/code/deployer/operator/analyer/prompt.txt",
+  "schema_file": "/root/code/deployer/operator/analyer/root-cause.schema.json",
+  "codex_command": "/usr/bin/codex",
+  "sandbox": "read-only",
+  "ask_for_approval": "never",
+  "daily_groups": 20,
+  "samples_per_group": 3,
+  "sample_chars": 4000,
+  "total_chars": 60000,
+  "timeout_seconds": 300,
+  "retry_after_seconds": 3600
+}

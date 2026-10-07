@@ -1,0 +1,3 @@
+# Install in /etc/crontab after copying analyzer.conf.example to analyzer.conf
+# and reviewing the configured paths. The system crontab includes the user field.
+0 23 * * * root /usr/bin/flock -n /run/lock/deployer-error-analyzer.lock /usr/bin/python3 /root/code/deployer/operator/analyer/analyze_errors.py --config /root/code/deployer/operator/analyer/analyzer.conf >> /opt/logs/error-analyzer.log 2>&1
