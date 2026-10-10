@@ -1,2 +1,0 @@
-aliyun-python-sdk-core==2.16.0
-aliyun-python-sdk-bssopenapi==2.0.3
