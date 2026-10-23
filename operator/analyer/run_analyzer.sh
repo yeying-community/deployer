@@ -2,10 +2,24 @@
 set -u
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 config_file="${ANALYZER_CONFIG:-${script_dir}/analyzer.conf}"
+ops_home="${YEYING_OPS_HOME:-/root/.codex/skills/yeying-ops}"
+workflow="${ops_home}/scripts/ops_workflow.py"
+
+if [[ ! -f "${workflow}" ]]; then
+  printf 'ERROR: installed yeying-ops workflow not found: %s\n' "${workflow}" >&2
+  exit 2
+fi
+
 set +e
 # The production Codex key is exported after the interactive guard in
 # /root/.bashrc, so use an interactive shell to load that existing environment.
-/usr/bin/bash -ic "/usr/bin/python3 -B '${script_dir}/analyze_errors.py' --config '${config_file}'"
+bash_command="${BASH_COMMAND_PATH:-$(command -v bash)}"
+if [[ -z "${bash_command}" || ! -x "${bash_command}" ]]; then
+  printf 'ERROR: bash executable not found: %s\n' "${bash_command:-<empty>}" >&2
+  exit 2
+fi
+"${bash_command}" -ic 'exec "$0" -B "$1" run --config "$2" "${@:3}"' \
+  /usr/bin/python3 "${workflow}" "${config_file}" "$@"
 analyzer_status=$?
 set -e
 /usr/bin/python3 - "$config_file" "$analyzer_status" <<'PY'
@@ -34,7 +48,7 @@ else:
 total_occurrences = sum(row.get("occurrences", 0) for row in rows)
 skipped_occurrences = sum(row.get("occurrences", 0) for row in rows if row.get("status") == "skipped")
 category_text = "，".join(f"{key} {value}" for key, value in sorted(categories.items())) or "无"
-message = ["【ERROR 根因分析日报】", f"日期：{date.today().isoformat()}", f"分组：成功 {counts.get('success', 0)}，失败 {counts.get('failed', 0)}，跳过 {counts.get('skipped', 0)}，已完成 {counts.get('already_success', 0)}", f"根因分类：{category_text}", f"覆盖：{total_occurrences} 条告警，跳过组涉及 {skipped_occurrences} 条"]
+message = ["【ERROR 根因分析与审计日报】", f"日期：{date.today().isoformat()}", f"分组：成功 {counts.get('success', 0)}，失败 {counts.get('failed', 0)}，跳过 {counts.get('skipped', 0)}，今日已分析 {counts.get('already_analyzed', 0)}", f"根因分类：{category_text}", f"覆盖：{total_occurrences} 条告警，跳过组涉及 {skipped_occurrences} 条"]
 if top: message += ["", "【重点结果】", *top]
 message += ["", f"分析器退出码：{exit_code}"]
 notify = Path("/root/code/deployer/operator/feishu-notify/feishu_reminder.py")

@@ -2,6 +2,7 @@ __pycache__/
 *.pyc
 state.db
 state.db-*
+runtime/
 results/
 work/
 # Host-specific production configuration.

@@ -1,4 +1,6 @@
-# Install in /etc/crontab after copying analyzer.conf.example to analyzer.conf
-# and reviewing the configured paths. Runs daily at 23:00 (within 23:00-24:00).
+# Install yeying-ops and yeying-project for the root user, then copy
+# analyzer.conf.example to analyzer.conf and review every configured path.
+# Runs daily at 23:00. The Skill also holds its own workflow lock; flock is a
+# second layer that prevents overlapping scheduler invocations.
 # The system crontab includes the user field.
 0 23 * * * root /usr/bin/flock -n /run/lock/deployer-error-analyzer.lock /root/code/deployer/operator/analyer/run_analyzer.sh >> /opt/logs/error-analyzer.log 2>&1
