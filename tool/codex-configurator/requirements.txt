@@ -1,0 +1,3 @@
+customtkinter==6.0.0
+tomlkit==0.15.2
+pillow==13.0.0
