@@ -95,6 +95,10 @@ less /opt/logs/upgrade.log
 `upgrade.sh` 启动目标服务时保留当前终端的标准输入，并同时把启动输出显示在终端和写入
 `/opt/logs/upgrade.log`。如果模块启动脚本需要交互输入（例如 node 的 secrets vault 密码），
 必须从前台交互终端执行升级；定时任务或重定向了标准输入的非交互调用无法完成这类提示。
+如果提示 `upgrade task is already running`，不要只根据锁文件中的 PID 判断。使用
+`flock -n /tmp/operator-upgrade.lock -c true` 检查锁是否可获取：退出码为 `0` 表示锁当前空闲；
+否则可用 `fuser -v /tmp/operator-upgrade.lock` 查找打开该文件的进程，并确认其实际运行目录后再处理。
+`fuser` 只能列出打开文件的进程，不能单独证明进程持有锁；锁文件中记录的 PID 也不能作为锁状态依据。
 
 ## 项目升级钩子
 
