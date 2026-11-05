@@ -12,8 +12,8 @@
 - 测试环境由定时任务调用`deployer/operator/upgrade/upgrade.sh` 依据`operator/upgrade/modules.conf`的配置来完成对应模块的升级。
 - 生产环境的升级需要手动执行`deployer/operator/upgrade/upgrade.sh` 依据`operator/upgrade/modules.conf`的配置来完成对应模块的升级。
 
-当前已接入统一升级流程的模块为 `chat`、`node`、`project`、`router`、`social`、
-`warehouse` 和 `billing`。其他项目必须先满足本规范的安装包契约，再加入 `modules.conf`。
+当前 `modules.conf` 仍只登记服务型部署单元：`chat`、`node`、`project`、`router`、`social`、
+`warehouse` 和 `billing`；这不代表它们已通过新 manifest 契约验收。独立 static 单元通过可选的 `static-units.conf` 配置，不加入服务清单；desktop 制品不得由服务器升级器部署。完整跨项目现状见 [PACKAGING_AUDIT.md](./PACKAGING_AUDIT.md)。
 
 模块名称必须与安装包前缀、部署目录前缀和升级脚本约定一致。例如模块 `chat` 对应：
 
@@ -101,6 +101,26 @@ billing
 
 ## 制品命名与版本选择
 
+`modules.conf` 目前仍使用服务模块名，兼容旧格式包。新发布制品统一按照
+[`PACKAGING.md`](./PACKAGING.md) 中的 `release-manifest.json` 声明 artifact ID、类型、源 commit、文件和 SHA-256；升级器必须先验证清单和包校验，再按部署单元选择版本。未迁移到清单格式的旧包只能走明确的兼容期，不能据此接入新的 static 或多单元发布流程。
+
+当前实现状态：`compile_packages.sh` 会在发布前校验 manifest、每个包的 SHA-256 和包结构，并上传版本化 manifest。
+传统服务升级仍按 `modules.conf` 中的包名前缀选择版本，并使用可选 `FILE_VERIFY` sidecar；它尚未基于 manifest 选择服务 artifact。
+另有独立静态流程：`static-units.conf` 中配置的站点会下载版本 manifest 及所列制品，用 `package_manifest.sh` 校验哈希和归档，再原子切换标准目录的 `current` 软链接；HTTP 健康检查失败时恢复原软链接。该流程仅在静态站点完成 vhost 迁移并配置健康 URL 后才会运行。跨 unit 独立版本选择、desktop 部署、真实站点升级和回滚演练仍未验收。
+
+### 独立静态资源的统一部署目录
+
+所有独立发布的前端站点统一部署在 `/opt/deploy/static/<site_id>`。`site_id` 全社区唯一，建议以前缀区分仓库；manifest 的目标路径只能是 `/opt/deploy/static/<site_id>`。目录布局和 Web 服务器 root 固定为：
+
+```text
+/opt/deploy/static/<site_id>/current -> releases/<package_root>
+/opt/deploy/static/<site_id>/releases/<package_root>/...
+```
+
+Nginx 等静态服务器的 `root` 指向 `/opt/deploy/static/<site_id>/current`。部署器下载并验证包后，将文件解到对应的 `releases/<package_root>`，检查静态入口和 HTTP 资源，再原子切换 `current`；失败时保留旧版本指向，成功后至少保留一个旧版本用于人工回退。manifest 不得决定其他磁盘路径。与后端强耦合的 `service-with-assets` 继续随服务版本部署。
+
+静态部署处理器已实现上述目录布局。站点必须先在 `static-units.conf` 声明仓库、unit、site 和 HTTP 健康 URL；已有站点仍需在相应 Nginx vhost 迁移、验证后才启用。例如 warehouse 当前使用 `/usr/share/nginx/html/webdav` 的流程属于旧路径，不能据此认定已迁移到标准目录。
+
 升级脚本只识别 `.tar.gz` 安装包，命名格式为：
 
 ```text
@@ -125,26 +145,26 @@ chat-v1.2.3-a1b2c3d.tar.gz
 
 ## 打包与上传
 
-在构建节点执行
+在构建节点显式触发
 
-`operator/upgrade/compile_packages.sh` 的主要行为：
+`operator/upgrade/compile_packages.sh --publish` 的主要行为：
 
-1. 读取 `operator/upgrade/modules.conf`。
-2. 针对每个模块进入 `/root/code/<module>`。
-3. 拉取并强制同步 `origin/main`。
-4. 对比 `/opt/package` 中最新本地包的 7 位 commit 与当前代码 commit。
-5. commit 不一致或本地包缺失时，执行模块仓库内的 `scripts/package.sh`。
-6. 从 `<module>/output/` 选择匹配当前 commit 的最新包。
-7. 复制安装包到 `/opt/package`。
-8. 如启用 `FILE_VERIFY`，生成校验文件。
-9. 调用 `transfer_packages.sh upload <filename>` 上传安装包和校验文件，最多重试 3 次。
-10. 尝试执行 `operator/change-log/release_notes.sh --module <module>` 生成发布说明。
+1. 读取 `operator/upgrade/package_modules.conf`（缺失时兼容回退到 `modules.conf`），要求每个仓库工作区干净、位于 `main` 且与 `origin/main` 完全一致。
+2. 创建指向当前 commit 的临时 detached worktree 和空输出目录。
+3. 要求 `scripts/package.sh` 声明安全 API，并传入明确的 `--ref`、`--version`、`--output-dir`。
+4. 校验 manifest 的 repository、版本、commit、artifact ID、类型、归档路径、SHA-256 和包结构。
+5. 校验并上传 manifest 声明的全部 service、static 或 desktop 制品；该仓库可产生多个独立 artifact，也可以只有 static/desktop artifact。
+6. 将未改变的制品复制到 `/opt/package`，拒绝相同文件名下的不同内容；如启用 `FILE_VERIFY`，生成校验文件。
+7. 调用 `transfer_packages.sh upload <filename>` 上传制品、校验文件和版本化 manifest，最多重试 3 次。
+8. 尝试执行 `operator/change-log/release_notes.sh --module <module>` 生成发布说明。
 
 注意事项：
 
-- `compile_packages.sh` 会对模块仓库执行 `git reset --hard origin/main` 和 `git clean -fd`，请勿在 `/root/code/<module>` 保留未提交改动。
-- 模块仓库必须提供 `scripts/package.sh`。
-- 产物应输出到 `/root/code/<module>/output/`。
+- 不带 `--publish` 的调用仅报告自动打包已停用，不构建、不上传；CI 必须绑定人工批准的 release 事件，不能由普通代码 push 或周期扫描触发。
+- 构建器和项目脚本不得对持久模块工作区执行 `git reset --hard` 或 `git clean -fd`。执行发布前检查 `main` 工作区干净且与 `origin/main` 一致；脏工作区或版本不同必须失败并提示修复，禁止清理用户数据。
+- 模块仓库必须提供 `scripts/package.sh`，并逐步迁移到 `--ref`、`--version` 和 `release-manifest.json` 契约。
+- 当前构建输出位于编译节点临时目录；不会写入模块仓库的 `output/`。
+- 传统服务升级流程仍使用 legacy 包名选择，尚未消费 manifest 中的服务 artifact。static 流程只处理显式配置的站点；真实环境使用前应完成站点迁移和演练。
 - 产物文件名必须包含当前代码的 7 位 commit。
 
 ## 安装包传输
@@ -189,6 +209,8 @@ bash transfer_packages.sh download chat-v1.2.3-a1b2c3d.tar.gz
 15. 执行 `scripts/upgrade.sh finalize <current-dir> <target-dir>`，然后更新 `/opt/deploy/<module>` 软链接。
 16. 发送升级完成或异常通知。
 
+服务模块处理后，`upgrade.sh` 会检查可选 `static-units.conf`。对每个已配置站点，升级器选择该仓库最新 manifest，下载并校验所列制品，从中定位指定 static unit，部署到 `/opt/deploy/static/<site_id>/releases/<package_root>`，切换 `current` 并请求配置的健康 URL。HTTP 检查失败时会恢复切换前的 `current`；如果站点未配置或健康 URL 不可达，不会把它当作升级成功。
+
 日志文件：
 
 | 脚本 | 日志 |
@@ -229,6 +251,7 @@ bash transfer_packages.sh download chat-v1.2.3-a1b2c3d.tar.gz
 
 后端升级流程由 `operator/upgrade/upgrade.sh` 的通用流程完成。
 
+以下是 warehouse 当前项目 hook 的旧静态发布实现；它仍写入 `/usr/share/nginx/html/webdav`，尚未迁移到统一静态目录。迁移需与 Nginx root 和静态 manifest handler 一起实施并验证。
 
 前端发布流程：
 
@@ -251,7 +274,7 @@ cd /opt/deploy/<module>
 bash scripts/health-check.sh --level all
 ```
 
-5. 对 `warehouse` 前端升级，确认 nginx 已重启且静态目录 `/usr/share/nginx/html/webdav` 内容来自目标版本。
+5. 对尚未迁移的 `warehouse` 前端旧流程，确认 nginx 已重启且静态目录 `/usr/share/nginx/html/webdav` 内容来自目标版本。迁移后应检查 `/opt/deploy/static/warehouse-web/current` 和对应 HTTP 资源。
 6. 对目标版本进行测试。
 
 ## 回退操作
@@ -275,7 +298,7 @@ ln -sfn chat-v1.2.2-a1b2c3d /opt/deploy/chat
 - 手动回退时必须确认 `/opt/deploy/<module>-v<old_version>-<commit>` 目录仍存在。
 - `ln -sfn` 的目标应使用实际旧版本目录名，不要照抄示例 commit。
 - 回退后执行与升级后相同的日志、软链接、进程和健康检查验证。
-- `warehouse` 前端回退需要将旧版本 `web/dist` 重新复制到 `/usr/share/nginx/html/webdav` 并重启 nginx。
+- 尚未迁移的 `warehouse` 前端回退需要将旧版本 `web/dist` 重新复制到 `/usr/share/nginx/html/webdav` 并重启 nginx；统一目录迁移完成后改为切回 `/opt/deploy/static/warehouse-web/current` 指向的旧版本。
 - 如果升级失败发生在模块脚本执行后、软链接更新前，服务可能已经运行在目标目录，但 `/opt/deploy/<module>` 仍指向旧目录，需结合进程和日志确认实际运行目录。
 - `scripts/upgrade.sh` 的 `prepare` 返回 `10` 只跳过通用服务切换；`post-copy`、`finalize` 和软链接更新仍会继续执行。只有项目明确需要 custom-only 模式时才能使用该退出码。
 

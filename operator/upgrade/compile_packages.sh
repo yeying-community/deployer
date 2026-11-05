@@ -1,15 +1,23 @@
 #!/usr/bin/env bash
-# check module code status, build package if needed, then upload with retry
+# build and upload approved release artifacts; no-argument invocations are disabled
 
-# Load host-managed environment first so cron/systemd executions inherit
-# configured tool paths such as Maven from /etc/profile.
-if [[ -f /etc/profile ]]; then
-    # shellcheck disable=SC1091
-    source /etc/profile >/dev/null 2>&1 || true
+if [[ $# -eq 0 ]]; then
+    printf '%s\n' "automatic package build is disabled; pass --publish for an approved release"
+    exit 0
+fi
+if [[ $# -ne 1 || "$1" != "--publish" ]]; then
+    printf '%s\n' "Usage: $0 --publish" >&2
+    exit 2
 fi
 
 set -euo pipefail
 shopt -s nullglob
+
+# Load host-managed environment only for an explicit release run.
+if [[ -f /etc/profile ]]; then
+    # shellcheck disable=SC1091
+    source /etc/profile >/dev/null 2>&1 || true
+fi
 
 script_dir=$(cd "$(dirname "$0")" || exit 1; pwd)
 # shellcheck disable=SC1091
@@ -24,12 +32,18 @@ fi
 # while preserving profile-provided entries such as Maven and nvm CLIs.
 export PATH="/usr/local/go/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin${PATH:+:${PATH}}"
 
+if ! command -v jq >/dev/null 2>&1; then
+    printf '%s\n' "ERROR! jq is required for package API and release manifest validation" >&2
+    exit 1
+fi
+
 init_log_file "check-code-status.log"
 
 lock_file="${COMPILE_PACKAGES_LOCK_FILE:-/tmp/operator-compile-packages.lock}"
 lock_notice_file="${COMPILE_PACKAGES_LOCK_NOTICE_FILE:-${lock_file}.notice}"
 lock_notice_interval="${COMPILE_PACKAGES_LOCK_NOTICE_INTERVAL_SECONDS:-300}"
 config_file="${script_dir}/modules.conf"
+package_config_file="${script_dir}/package_modules.conf"
 env_file="${script_dir}/.env"
 code_root="/root/code"
 package_root="/opt/package"
@@ -40,6 +54,19 @@ dingtalk_scene="create_package"
 feishu_scene="create_package"
 overall_status=0
 notify_type="版本生成"
+active_build_repo=""
+active_build_workspace=""
+
+cleanup_active_build() {
+    if [[ -n "$active_build_repo" && -n "$active_build_workspace" ]]; then
+        git -C "$active_build_repo" worktree remove --force "${active_build_workspace}/source" >> "${LOGFILE:-/dev/null}" 2>&1 || true
+        rm -rf -- "$active_build_workspace"
+    fi
+    active_build_repo=""
+    active_build_workspace=""
+}
+
+trap cleanup_active_build EXIT
 
 acquire_compile_lock() {
     touch "$lock_file"
@@ -143,8 +170,9 @@ ensure_release_notes_codex() {
 }
 
 usage() {
-    log "Usage: $0"
-    log "Read modules from ${config_file}, then check/build/upload packages."
+    log "Usage: $0 --publish"
+    log "Without --publish, automatic package build and upload are disabled."
+    log "With --publish, read repositories from ${package_config_file} (or ${config_file} for compatibility), then build, validate, and upload their artifacts."
 }
 
 if [[ -z "${notify_from}" ]]; then
@@ -428,47 +456,51 @@ notify_upload_failure() {
     esac
 }
 
-if [[ $# -ne 0 ]]; then
-    usage
-    exit 1
-fi
-
 validate_file_verify_config || exit 1
 
-load_modules "$config_file" || {
+if [[ -f "$package_config_file" ]]; then
+    load_modules "$package_config_file" || {
+        usage
+        exit 1
+    }
+else
+    load_modules "$config_file" || {
     usage
     exit 1
-}
+    }
+fi
+
+release_version="${RELEASE_VERSION:-}"
+if [[ ! "$release_version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+    log "ERROR! set RELEASE_VERSION to a semantic version such as 1.2.3 for an explicit release"
+    exit 1
+fi
 
 sync_main_latest() {
     local module_name=$1
     local module_dir=$2
+    local current_branch current_commit remote_commit
+
+    if [[ -n "$(git -C "$module_dir" status --porcelain)" ]]; then
+        log "ERROR! refusing to build ${module_name}: worktree has local changes"
+        return 1
+    fi
+
+    current_branch=$(git -C "$module_dir" symbolic-ref --quiet --short HEAD || true)
+    if [[ "$current_branch" != "main" ]]; then
+        log "ERROR! refusing to build ${module_name}: expected main, got ${current_branch:-detached HEAD}"
+        return 1
+    fi
 
     if ! git -C "$module_dir" fetch origin main >> "$LOGFILE" 2>&1; then
         log "ERROR! git fetch origin main failed for ${module_name}"
         return 1
     fi
 
-    # Force local workspace to match origin/main for build determinism.
-    if git -C "$module_dir" show-ref --verify --quiet refs/heads/main; then
-        if ! git -C "$module_dir" checkout main >> "$LOGFILE" 2>&1; then
-            log "ERROR! git checkout main failed for ${module_name}"
-            return 1
-        fi
-    else
-        if ! git -C "$module_dir" checkout -b main --track origin/main >> "$LOGFILE" 2>&1; then
-            log "ERROR! create local main from origin/main failed for ${module_name}"
-            return 1
-        fi
-    fi
-
-    if ! git -C "$module_dir" reset --hard origin/main >> "$LOGFILE" 2>&1; then
-        log "ERROR! git reset --hard origin/main failed for ${module_name}"
-        return 1
-    fi
-
-    if ! git -C "$module_dir" clean -fd >> "$LOGFILE" 2>&1; then
-        log "ERROR! git clean -fd failed for ${module_name}"
+    current_commit=$(git -C "$module_dir" rev-parse HEAD) || return 1
+    remote_commit=$(git -C "$module_dir" rev-parse refs/remotes/origin/main) || return 1
+    if [[ "$current_commit" != "$remote_commit" ]]; then
+        log "ERROR! refusing to build ${module_name}: main differs from origin/main; sync it explicitly and retry"
         return 1
     fi
 
@@ -515,56 +547,6 @@ parse_package_name() {
     return 0
 }
 
-select_latest_local_package() {
-    local module_name=$1
-    shift
-    local candidates=("$@")
-    local item name version commit
-    local max_key="" max_name="" max_version="" max_commit="" max_stem=""
-    local version_key=""
-
-    for item in "${candidates[@]}"; do
-        name=$(basename "$item")
-        if ! parse_package_name "$module_name" "$name"; then
-            continue
-        fi
-        version="$PARSED_PACKAGE_VERSION"
-        commit="$PARSED_PACKAGE_COMMIT"
-
-        version_key=$(version_key_from_version "$version") || continue
-        if [[ -z "$max_name" || "$version_key" > "$max_key" || ( "$version_key" == "$max_key" && "$name" > "$max_stem" ) ]]; then
-            max_key="$version_key"
-            max_name="$name"
-            max_version="$version"
-            max_commit="$commit"
-            max_stem="$name"
-        fi
-    done
-
-    SELECTED_NAME="$max_name"
-    SELECTED_VERSION="$max_version"
-    SELECTED_COMMIT="$max_commit"
-    SELECTED_VERSION_KEY="$max_key"
-    [[ -n "$SELECTED_NAME" ]]
-}
-
-capture_output_package_state() {
-    local module_name=$1
-    local module_dir=$2
-    local state_file=$3
-    local package_path package_name package_hash
-
-    : > "$state_file"
-    for package_path in \
-        "${module_dir}/output/${module_name}-"*.tar.gz \
-        "${module_dir}/output/${module_name}-"*.zip; do
-        [[ -f "$package_path" ]] || continue
-        package_name=$(basename "$package_path")
-        package_hash=$(sha256sum "$package_path" | awk '{print $1}')
-        printf '%s %s\n' "$package_name" "$package_hash" >> "$state_file"
-    done
-}
-
 if [[ ! -f "$transfer_script" ]]; then
     log "ERROR! transfer script is missing: ${transfer_script}"
     exit 1
@@ -586,6 +568,7 @@ else
 fi
 
 for module_name in "${MODULES[@]}"; do
+    cleanup_active_build
     log "\nhandle module [${module_name}]"
 
     module_dir="${code_root}/${module_name}"
@@ -608,43 +591,8 @@ for module_name in "${MODULES[@]}"; do
         continue
     fi
 
-    latest_commit=$(git -C "$module_dir" rev-parse --short=7 HEAD)
-    need_build=0
-    build_reason=""
-
-    local_packages=(
-        "${package_root}/${module_name}-"*.tar.gz
-        "${package_root}/${module_name}-"*.zip
-    )
-    if [[ ${#local_packages[@]} -eq 0 ]]; then
-        need_build=1
-        build_reason="no local package found in ${package_root}"
-    else
-        local_package_names=()
-        for package_path in "${local_packages[@]}"; do
-            local_package_names+=("$(basename "$package_path")")
-        done
-
-        if select_latest_local_package "$module_name" "${local_package_names[@]}"; then
-            log "latest local package: ${SELECTED_NAME}"
-            log "latest local package version: ${SELECTED_VERSION}, commit: ${SELECTED_COMMIT}"
-            log "latest code commit: ${latest_commit}"
-
-            if [[ "$SELECTED_COMMIT" != "$latest_commit" ]]; then
-                need_build=1
-                build_reason="latest code commit differs from latest package commit"
-            else
-                log "no build needed for ${module_name}, package commit matches latest code commit"
-            fi
-        else
-            need_build=1
-            build_reason="local package names are invalid"
-        fi
-    fi
-
-    if [[ "$need_build" -eq 0 ]]; then
-        continue
-    fi
+    latest_commit=$(git -C "$module_dir" rev-parse HEAD)
+    build_reason="explicit --publish release"
 
     if [[ ! -f "$package_script" ]]; then
         log "ERROR! package script is missing: ${package_script}"
@@ -657,12 +605,39 @@ for module_name in "${MODULES[@]}"; do
         continue
     fi
 
-    build_state_before=$(mktemp)
-    capture_output_package_state "$module_name" "$module_dir" "$build_state_before"
+    package_api_file="${module_dir}/scripts/package-api.json"
+    if [[ ! -f "$package_api_file" ]] || ! jq -e '
+        type == "object" and
+        .api_version == 1 and
+        (.supports | type == "array" and all(.[]; type == "string") and
+            (["--ref", "--version", "--output-dir"] - . == [])) and
+        .creates_git_tags == false and
+        .pushes_git_refs == false and
+        .builds_in_isolated_checkout == true and
+        .manifest == "release-manifest.json"
+    ' "$package_api_file" >/dev/null 2>&1; then
+        log "ERROR! package script has not declared the safe release API: ${package_api_file}"
+        log "ERROR! refusing to run a legacy script that may mutate Git refs, workspace files, or output contents"
+        overall_status=1
+        continue
+    fi
+
+    active_build_repo="$module_dir"
+    active_build_workspace=$(mktemp -d "${TMPDIR:-/tmp}/compile-packages-${module_name}.XXXXXX")
+    build_checkout="${active_build_workspace}/source"
+    build_output="${active_build_workspace}/output"
+    mkdir -p "$build_output"
+    if ! git -C "$module_dir" worktree add --detach "$build_checkout" "$latest_commit" >> "$LOGFILE" 2>&1; then
+        log "ERROR! failed to create isolated build checkout for ${module_name}"
+        overall_status=1
+        continue
+    fi
 
     log "build package for ${module_name}: ${build_reason}"
     package_log="$(mktemp)"
-    if ! (cd "$module_dir" && bash scripts/package.sh 200>&- > "$package_log" 2>&1); then
+    if ! (cd "$build_checkout" && bash scripts/package.sh \
+        --ref "$latest_commit" --version "$release_version" --output-dir "$build_output" \
+        200>&- > "$package_log" 2>&1); then
         log "ERROR! package script failed for ${module_name}; output:"
         sed -n '1,160p' "$package_log" | tee -a "$LOGFILE"
         if [[ "$(wc -l < "$package_log")" -gt 160 ]]; then
@@ -670,7 +645,6 @@ for module_name in "${MODULES[@]}"; do
         else
             rm -f "$package_log"
         fi
-        rm -f "$build_state_before"
         notify_build_failure \
             "$module_name" \
             "执行构建脚本失败：scripts/package.sh" \
@@ -682,72 +656,54 @@ for module_name in "${MODULES[@]}"; do
     cat "$package_log" >> "$LOGFILE"
     rm -f "$package_log"
 
-    output_packages=(
-        "${module_dir}/output/${module_name}-"*.tar.gz
-        "${module_dir}/output/${module_name}-"*.zip
-    )
-    if [[ ${#output_packages[@]} -eq 0 ]]; then
-        log "ERROR! package file not found: ${module_dir}/output/${module_name}-*.{tar.gz,zip}"
-        rm -f "$build_state_before"
+    manifest_file="${build_output}/release-manifest.json"
+    manifest_validator="${script_dir}/package_manifest.sh"
+    if [[ ! -f "$manifest_file" ]]; then
+        log "ERROR! release manifest is missing: ${manifest_file}"
         notify_build_failure \
             "$module_name" \
-            "构建完成后未找到产物：${module_dir}/output/${module_name}-*.{tar.gz,zip}" \
-            "构建脚本执行结束，但未生成符合命名规则的压缩包" \
-            "检查 output 目录和产物命名规则后重新打包"
+            "构建完成后未找到制品清单：${manifest_file}" \
+            "项目 package.sh 尚未迁移到 release-manifest.json 契约" \
+            "按 specification/PACKAGING.md 生成清单后重新发布"
         overall_status=1
         continue
     fi
 
-    output_package_names=()
-    for package_path in "${output_packages[@]}"; do
-        output_package_names+=("$(basename "$package_path")")
-    done
-
-    commit_matched_packages=()
-    for package_name in "${output_package_names[@]}"; do
-        if ! parse_package_name "$module_name" "$package_name"; then
-            continue
-        fi
-        package_commit="$PARSED_PACKAGE_COMMIT"
-        if [[ "$package_commit" == "$latest_commit" ]]; then
-            commit_matched_packages+=("$package_name")
-        fi
-    done
-
-    if [[ ${#commit_matched_packages[@]} -eq 0 ]]; then
-        log "ERROR! no output package with latest commit (${latest_commit}) for ${module_name}"
-        rm -f "$build_state_before"
+    if ! "$manifest_validator" "$manifest_file" \
+        --repository "$module_name" --source-commit "$latest_commit" --version "$release_version" >> "$LOGFILE" 2>&1; then
+        log "ERROR! invalid release manifest for ${module_name}: ${manifest_file}"
         notify_build_failure \
             "$module_name" \
-            "构建产物未包含最新提交 ${latest_commit}" \
-            "output 目录中的产物 commit 标识与当前代码不一致" \
-            "检查版本注入逻辑和产物命名后重新打包"
+            "制品清单或包校验失败：${manifest_file}" \
+            "清单、包结构、版本、commit 或 SHA-256 不符合打包规范" \
+            "检查 package_manifest.sh 输出并修复后重试"
         overall_status=1
         continue
     fi
 
-    if ! select_latest_local_package "$module_name" "${commit_matched_packages[@]}"; then
-        log "ERROR! failed to find valid output package for ${module_name} with commit ${latest_commit}"
-        rm -f "$build_state_before"
-        notify_build_failure \
-            "$module_name" \
-            "无法识别最新提交 ${latest_commit} 对应的有效构建产物" \
-            "产物已生成，但文件名不符合解析规则或版本信息异常" \
-            "检查产物命名格式后重新打包"
+    artifact_index="${active_build_workspace}/artifacts.tsv"
+    if ! "$manifest_validator" "$manifest_file" --version "$release_version" --artifacts-tsv > "$artifact_index"; then
+        log "ERROR! unable to read validated artifact list for ${module_name}"
         overall_status=1
         continue
     fi
 
-    package_filename="$SELECTED_NAME"
-    package_file="${module_dir}/output/${package_filename}"
-    if [[ ! -f "$package_file" ]]; then
-        log "ERROR! built package is missing: ${package_file}"
-        rm -f "$build_state_before"
-        notify_build_failure \
-            "$module_name" \
-            "构建产物缺失：${package_file}" \
-            "已选中的产物文件不存在，构建结果不完整" \
-            "检查构建脚本清理逻辑和 output 目录后重新打包"
+    package_names=()
+    configured_artifact_count=0
+    while IFS=$'\t' read -r artifact_unit artifact_type package_name; do
+        [[ -n "$package_name" ]] || continue
+        package_names+=("$package_name")
+        configured_artifact_count=$((configured_artifact_count + 1))
+    done < "$artifact_index"
+
+    if [[ ${#package_names[@]} -eq 0 ]]; then
+        log "ERROR! release manifest contains no artifacts for ${module_name}"
+        overall_status=1
+        continue
+    fi
+
+    if [[ "$configured_artifact_count" -eq 0 ]]; then
+        log "ERROR! release manifest contains no publishable artifacts for ${module_name}"
         overall_status=1
         continue
     fi
@@ -770,48 +726,94 @@ for module_name in "${MODULES[@]}"; do
         log "release notes generated for ${module_name}"
     fi
 
-    package_hash_after=$(sha256sum "$package_file" | awk '{print $1}')
-    package_hash_before=$(awk -v target="$package_filename" '$1 == target {print $2; exit}' "$build_state_before")
-    rm -f "$build_state_before"
-    if [[ -n "$package_hash_before" && "$package_hash_before" == "$package_hash_after" ]]; then
-        log "package already exists for ${module_name}: ${package_filename} (unchanged, reuse)"
-    fi
+    module_publish_status=0
+    for package_filename in "${package_names[@]}"; do
+        package_file="${build_output}/${package_filename}"
+        if [[ ! -f "$package_file" ]]; then
+            log "ERROR! built package is missing: ${package_file}"
+            overall_status=1
+            module_publish_status=1
+            continue
+        fi
 
-    cp -f "$package_file" "${package_root}/${package_filename}"
-    log "package copied to ${package_root}/${package_filename}"
+        package_hash_after=$(sha256sum "$package_file" | awk '{print $1}')
+        local_package_file="${package_root}/${package_filename}"
+        if [[ -e "$local_package_file" ]]; then
+            if [[ ! -f "$local_package_file" || -L "$local_package_file" ]]; then
+                log "ERROR! refusing to replace a non-regular package path: ${local_package_file}"
+                overall_status=1
+                module_publish_status=1
+                continue
+            fi
+            package_hash_before=$(sha256sum "$local_package_file" | awk '{print $1}')
+            if [[ "$package_hash_before" != "$package_hash_after" ]]; then
+                log "ERROR! refusing to overwrite immutable package with different bytes: ${package_filename}"
+                overall_status=1
+                module_publish_status=1
+                continue
+            fi
+            log "package already exists locally with matching SHA-256: ${package_filename}"
+        else
+            cp "$package_file" "$local_package_file"
+        fi
 
-    if verify_algorithm_enabled; then
-        generate_package_verify_file "$package_filename"
-    fi
+        log "package ready in ${package_root}: ${package_filename}"
 
-    if ! upload_with_retry "$package_filename"; then
-        log "ERROR! upload still failed after 3 retries: ${package_filename}"
-        notify_upload_failure "$(format_error_notice \
-            "${module_name}/${notify_type}" \
-            "P2" \
-            "处理中" \
-            "产物上传连续 3 次失败：${package_filename}" \
-            "新版本产物未能同步到制品仓库" \
-            "构建已完成，故障出现在上传阶段" \
-            "检查网络、WebDAV 配置和传输脚本后重试上传")"
-        overall_status=1
-        continue
-    fi
+        if verify_algorithm_enabled; then
+            generate_package_verify_file "$package_filename"
+        fi
 
-    if verify_algorithm_enabled; then
-        if ! upload_with_retry "${package_filename}.${file_verify}" "False"; then
-            log "ERROR! upload still failed after 3 retries: ${package_filename}.${file_verify}"
+        if ! upload_with_retry "$package_filename"; then
+            log "ERROR! upload still failed after 3 retries: ${package_filename}"
             notify_upload_failure "$(format_error_notice \
                 "${module_name}/${notify_type}" \
                 "P2" \
                 "处理中" \
-                "校验文件上传连续 3 次失败：${package_filename}.${file_verify}" \
-                "新版本产物校验文件未能同步到制品仓库" \
-                "构建已完成，故障出现在校验文件上传阶段" \
+                "产物上传连续 3 次失败：${package_filename}" \
+                "新版本产物未能同步到制品仓库" \
+                "构建已完成，故障出现在上传阶段" \
                 "检查网络、WebDAV 配置和传输脚本后重试上传")"
             overall_status=1
+            module_publish_status=1
             continue
         fi
+
+        if verify_algorithm_enabled; then
+            if ! upload_with_retry "${package_filename}.${file_verify}" "False"; then
+                log "ERROR! upload still failed after 3 retries: ${package_filename}.${file_verify}"
+                notify_upload_failure "$(format_error_notice \
+                    "${module_name}/${notify_type}" \
+                    "P2" \
+                    "处理中" \
+                    "校验文件上传连续 3 次失败：${package_filename}.${file_verify}" \
+                    "新版本产物校验文件未能同步到制品仓库" \
+                    "构建已完成，故障出现在校验文件上传阶段" \
+                    "检查网络、WebDAV 配置和传输脚本后重试上传")"
+                overall_status=1
+                module_publish_status=1
+                continue
+            fi
+        fi
+    done
+
+    if [[ "$module_publish_status" -eq 0 ]]; then
+        manifest_filename="release-manifest-${module_name}-v${release_version}-${latest_commit:0:7}.json"
+        manifest_destination="${package_root}/${manifest_filename}"
+        if [[ -e "$manifest_destination" ]]; then
+            if [[ ! -f "$manifest_destination" || -L "$manifest_destination" ]] || ! cmp -s "$manifest_file" "$manifest_destination"; then
+                log "ERROR! refusing to overwrite immutable release manifest: ${manifest_filename}"
+                overall_status=1
+                continue
+            fi
+        else
+            cp "$manifest_file" "$manifest_destination"
+        fi
+        if ! upload_with_retry "$manifest_filename" "False"; then
+            log "ERROR! failed to upload release manifest for ${module_name}"
+            overall_status=1
+        fi
+    else
+        log "ERROR! release manifest not published because one or more artifacts failed: ${module_name}"
     fi
 done
 
