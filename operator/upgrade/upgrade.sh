@@ -19,6 +19,7 @@ lock_file="${UPGRADE_LOCK_FILE:-/tmp/operator-upgrade.lock}"
 lock_notice_file="${UPGRADE_LOCK_NOTICE_FILE:-${lock_file}.notice}"
 lock_notice_interval="${UPGRADE_LOCK_NOTICE_INTERVAL_SECONDS:-300}"
 config_file="${script_dir}/modules.conf"
+static_units_config="${script_dir}/static-units.conf"
 env_file="${script_dir}/.env"
 package_root="/opt/package"
 deploy_root="/opt/deploy"
@@ -393,6 +394,158 @@ resolve_webdav_dir_url_from_env() {
     base_url="${base_url%/}"
 
     WEBDAV_DIR_URL="$base_url"
+}
+
+upgrade_static_units() {
+    local line repository unit_id site_id health_base_url extra
+    local manifest_name manifest_pattern manifest_file source_commit package_name package_file artifact_json
+    local target_version target_root target_health_path target_site_path current_target current_root current_version
+    local static_site_root artifact_names=() candidate
+
+    if [[ ! -f "$static_units_config" ]]; then
+        log "static deployment skipped: optional config is missing: ${static_units_config}"
+        return 0
+    fi
+    if [[ ! -x "${script_dir}/deploy_static_artifact.sh" ]]; then
+        log "ERROR! static deployment handler is missing: ${script_dir}/deploy_static_artifact.sh"
+        overall_status=1
+        return 1
+    fi
+    if ! command -v jq >/dev/null 2>&1; then
+        log "ERROR! jq is required for manifest-driven static deployment"
+        overall_status=1
+        return 1
+    fi
+
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        line="${line%%#*}"
+        [[ -n "${line//[[:space:]]/}" ]] || continue
+        repository="" unit_id="" site_id="" health_base_url="" extra=""
+        read -r repository unit_id site_id health_base_url extra <<< "$line"
+        if [[ -z "$repository" || -z "$unit_id" || -z "$site_id" || -z "$health_base_url" || -n "$extra" ||
+              ! "$repository" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ || ! "$unit_id" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ ||
+              ! "$site_id" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ || "$health_base_url" != http://* && "$health_base_url" != https://* ]]; then
+            log "ERROR! invalid row in ${static_units_config}: ${line}"
+            overall_status=1
+            continue
+        fi
+
+        manifest_pattern="^release-manifest-${repository}-v([0-9]+\\.[0-9]+\\.[0-9]+)-([0-9a-f]{7})\\.json$"
+        local manifest_candidates=()
+        for candidate in "${remote_files[@]}"; do
+            [[ "$candidate" =~ $manifest_pattern ]] && manifest_candidates+=("$candidate")
+        done
+        if [[ ${#manifest_candidates[@]} -eq 0 ]]; then
+            log "ERROR! no release manifest found for static repository ${repository}"
+            overall_status=1
+            continue
+        fi
+        manifest_name="$(printf '%s\n' "${manifest_candidates[@]}" | sort -V | tail -n 1)"
+        manifest_file="${package_root}/${manifest_name}"
+        if [[ ! -f "$manifest_file" || -L "$manifest_file" ]]; then
+            if ! bash "$transfer_script" download "$manifest_name" 200>&- >> "$LOGFILE" 2>&1; then
+                log "ERROR! failed to download static release manifest: ${manifest_name}"
+                overall_status=1
+                continue
+            fi
+        fi
+        if [[ ! -f "$manifest_file" || -L "$manifest_file" ]] || ! jq -e --arg repository "$repository" '.schema_version == 1 and .repository == $repository and (.source_commit | type == "string" and test("^[0-9a-f]{40}$")) and (.artifacts | type == "array")' "$manifest_file" >/dev/null 2>&1; then
+            log "ERROR! static release manifest is invalid: ${manifest_name}"
+            overall_status=1
+            continue
+        fi
+        source_commit="$(jq -r '.source_commit' "$manifest_file")"
+        if [[ ! "$manifest_name" =~ $manifest_pattern ]]; then
+            log "ERROR! static manifest filename is invalid: ${manifest_name}"
+            overall_status=1
+            continue
+        fi
+        local manifest_short_commit="${BASH_REMATCH[2]}"
+        if [[ "${source_commit:0:7}" != "$manifest_short_commit" ]]; then
+            log "ERROR! static manifest filename does not match its source commit: ${manifest_name}"
+            overall_status=1
+            continue
+        fi
+        if ! jq -e --arg unit "$unit_id" --arg site "$site_id" '[.artifacts[] | select(.unit_id == $unit and .type == "static" and any(.static_targets[]; .site_id == $site and .path == ("/opt/deploy/static/" + $site)))] | length == 1' "$manifest_file" >/dev/null 2>&1; then
+            log "ERROR! ${manifest_name} does not contain the configured static unit/site: ${unit_id}/${site_id}"
+            overall_status=1
+            continue
+        fi
+        if ! jq -e 'all(.artifacts[]; (.package | type == "string" and test("^[a-z0-9]+(-[a-z0-9]+)*-v[0-9]+\\.[0-9]+\\.[0-9]+-[0-9a-f]{7}\\.tar\\.gz$")) and (.package_root | type == "string" and test("^[a-z0-9]+(-[a-z0-9]+)*-v[0-9]+\\.[0-9]+\\.[0-9]+-[0-9a-f]{7}$")))' "$manifest_file" >/dev/null 2>&1; then
+            log "ERROR! static manifest contains unsafe package names: ${manifest_name}"
+            overall_status=1
+            continue
+        fi
+
+        artifact_names=()
+        mapfile -t artifact_names < <(jq -r '.artifacts[].package' "$manifest_file")
+        local artifacts_ready=1
+        for package_name in "${artifact_names[@]}"; do
+            [[ -n "$package_name" ]] || continue
+            if [[ ! -f "${package_root}/${package_name}" || -L "${package_root}/${package_name}" ]]; then
+                if [[ ! " ${remote_files[*]} " == *" ${package_name} "* ]] || ! bash "$transfer_script" download "$package_name" 200>&- >> "$LOGFILE" 2>&1; then
+                    log "ERROR! failed to download package referenced by ${manifest_name}: ${package_name}"
+                    artifacts_ready=0
+                    break
+                fi
+            fi
+        done
+        if [[ "$artifacts_ready" -ne 1 ]]; then
+            overall_status=1
+            continue
+        fi
+        if ! "${script_dir}/package_manifest.sh" "$manifest_file" --repository "$repository" --source-commit "$source_commit" >> "$LOGFILE" 2>&1; then
+            log "ERROR! static release manifest or artifact validation failed: ${manifest_name}"
+            overall_status=1
+            continue
+        fi
+        artifact_json="$(jq -c --arg unit "$unit_id" --arg site "$site_id" '[.artifacts[] | select(.unit_id == $unit and .type == "static" and any(.static_targets[]; .site_id == $site))][0]' "$manifest_file")"
+        package_name="$(jq -r '.package' <<< "$artifact_json")"
+        target_version="$(jq -r '.version' <<< "$artifact_json")"
+        target_root="$(jq -r '.package_root' <<< "$artifact_json")"
+        target_site_path="$(jq -r --arg site "$site_id" '.static_targets[] | select(.site_id == $site) | .path' <<< "$artifact_json")"
+        target_health_path="$(jq -r --arg site "$site_id" '.static_targets[] | select(.site_id == $site) | .health_check_path' <<< "$artifact_json")"
+        if [[ "$target_site_path" != "/opt/deploy/static/${site_id}" ]] || ! artifact_info_from_name "$unit_id" "$target_root" || [[ "$PACKAGE_VERSION" != "$target_version" ]]; then
+            log "ERROR! static artifact identity or destination is invalid for ${unit_id}"
+            overall_status=1
+            continue
+        fi
+
+        static_site_root="${deploy_root}/static/${site_id}"
+        current_version=""
+        current_root=""
+        if [[ -L "${static_site_root}/current" ]]; then
+            current_target="$(readlink "${static_site_root}/current")"
+            if [[ "$current_target" != releases/* || "$current_target" == *..* ]]; then
+                log "ERROR! static current link escapes its release directory: ${static_site_root}/current"
+                overall_status=1
+                continue
+            fi
+            current_root="${current_target#releases/}"
+            if ! artifact_info_from_name "$unit_id" "$current_root"; then
+                log "ERROR! current static package name is invalid for ${unit_id}: ${current_root}"
+                overall_status=1
+                continue
+            fi
+            current_version="$PACKAGE_VERSION"
+        elif [[ -e "${static_site_root}/current" ]]; then
+            log "ERROR! static current path is not a symlink: ${static_site_root}/current"
+            overall_status=1
+            continue
+        fi
+        if [[ "$current_root" == "$target_root" ]] || { [[ -n "$current_version" ]] && ! version_gt "$target_version" "$current_version"; }; then
+            log "static site ${site_id} is up to date (current=${current_version:-none}, remote=${target_version})"
+            continue
+        fi
+
+        package_file="${package_root}/${package_name}"
+        if ! "${script_dir}/deploy_static_artifact.sh" "$package_file" "$unit_id" "$site_id" "$target_root" "$target_health_path" "$health_base_url" >> "$LOGFILE" 2>&1; then
+            log "ERROR! static deployment failed and previous current link was restored when available: ${site_id}"
+            overall_status=1
+            continue
+        fi
+        log "static deployment completed: ${site_id} -> ${target_root}"
+    done < "$static_units_config"
 }
 
 if [[ ! -f "$transfer_script" ]]; then
@@ -795,6 +948,8 @@ for module_name in "${MODULES[@]}"; do
         fi
     fi
 done
+
+upgrade_static_units
 
 log "\nupgrade done. [$(date)]"
 exit "$overall_status"

@@ -23,7 +23,10 @@
   Pull Request 提交流程与规范
 
 - [PACKAGING.md](./PACKAGING.md)  
-  打包相关规范
+  按可部署单元定义服务、静态资源和多产物仓库的打包契约
+
+- [PACKAGING_AUDIT.md](./PACKAGING_AUDIT.md)
+  node、warehouse、router、chat、homepage、project、social、knowledge、orchestrator、books、billing 的兼容性现状与接入缺口
 
 - [UPGRADE.md](./UPGRADE.md)  
   升级操作说明（含打包上传、升级执行、模块差异、验证与回退）

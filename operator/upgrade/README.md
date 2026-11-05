@@ -4,18 +4,26 @@
 `upgrade.sh` 编排；项目安装包中的 `scripts/upgrade.sh` 只负责项目特有动作。
 deployer 不再提供 `upgrade_<module>.sh` 这类项目级升级脚本。
 
-当前已接入统一升级流程的模块是 `chat`、`node`、`project`、`router`、`social`、
-`warehouse` 和 `billing`。所有模块的安装包都必须提供 `scripts/upgrade.sh` 和健康检查脚本；
-接入前需要先按本 README 和
+当前服务型统一升级模块是 `chat`、`node`、`project`、`router`、`social`、
+`warehouse` 和 `billing`。新接入服务单元前必须按本 README 和
 [`specification/PACKAGING.md`](../../specification/PACKAGING.md) 补齐安装包契约并完成验证。
+纯静态与 desktop 单元不属于当前模块清单；跨项目现状见
+[`specification/PACKAGING_AUDIT.md`](../../specification/PACKAGING_AUDIT.md)。
+
+发布端用 `package_manifest.sh`（POSIX shell + `jq`）校验清单、SHA-256、归档结构和静态入口；显式发布环境需安装 `jq`、`tar` 和 `sha256sum` 或 `shasum`。`compile_packages.sh` 从 `package_modules.conf` 读取待构建仓库；若该文件不存在，则兼容回退到 `modules.conf`。`upgrade.sh` 继续从 `modules.conf` 读取服务升级单元；静态单元可通过单独的 `static-units.conf` 配置。
+编译器接受 manifest 中一个或多个 `service`、`service-with-assets`、`static` 或 `desktop` artifact，并校验、上传清单声明的全部制品。升级器对传统服务包仍使用兼容流程；配置后的静态单元会消费 manifest、校验制品并执行部署。清单驱动的服务选择仍未完成，desktop 单元不会由服务器升级器部署。
+
+独立发布的前端静态单元统一使用 `/opt/deploy/static/<site_id>`，Web 服务器 root 指向该目录下的 `current`，
+版本包保存在 `releases/`。manifest 的静态路径固定为 `/opt/deploy/static/<site_id>`，由校验器按全社区唯一的 `site_id` 检查。配置后的静态单元由 `deploy_static_artifact.sh` 解包、校验入口、原子切换软链接，并在 HTTP 健康检查失败时恢复旧指向。启用站点前必须先将 vhost root 迁移至标准 `current` 目录；warehouse 的
+`/usr/share/nginx/html/webdav` 仍是待迁移的旧路径。
 
 ## 脚本入口
 
 | 脚本 | 运行位置 | 用途 | 配置 | 日志 |
 | --- | --- | --- | --- | --- |
-| `compile_packages.sh` | 编译节点 | 同步模块 `main`、打包、生成校验文件并上传制品 | `modules.conf`、`.env` | `/opt/logs/check-code-status.log` |
+| `compile_packages.sh` | 编译节点 | 仅通过显式 `--publish` 事件构建、校验并上传制品 | `package_modules.conf`（缺省回退到 `modules.conf`）、`.env` | `/opt/logs/check-code-status.log` |
 | `transfer_packages.sh` | 编译节点或服务节点 | 在 `/opt/package` 与 WebDAV 之间传输单个文件 | `.env` | `/opt/logs/transfer-packages.log` |
-| `upgrade.sh` | 服务部署节点 | 选择目标版本并执行统一升级流程 | `modules.conf`、`.env` | `/opt/logs/upgrade.log` |
+| `upgrade.sh` | 服务部署节点 | 选择目标版本并执行统一升级流程，可选部署静态 unit | `modules.conf`、可选 `static-units.conf`、`.env` | `/opt/logs/upgrade.log` |
 
 项目级 `scripts/upgrade.sh` 的输出也会合并到 `/opt/logs/upgrade.log`，日志按统一入口集中查看。
 
@@ -26,11 +34,13 @@ deployer 不再提供 `upgrade_<module>.sh` 这类项目级升级脚本。
 ```bash
 cd /root/code/deployer/operator/upgrade
 cp modules.conf.template modules.conf
+cp package_modules.conf.template package_modules.conf
+cp static-units.conf.template static-units.conf
 cp .env.template .env
 chmod 600 .env
 ```
 
-编辑 `modules.conf`，每行填写一个模块名；空行和以 `#` 开头的行会被忽略。编辑
+`modules.conf` 是服务升级名单，只放已有服务部署目录的模块。`package_modules.conf` 是源码仓库的打包名单，可以包含只发布静态或桌面 artifact 的仓库，两者不要求相同。每行填写一个仓库名；空行和以 `#` 开头的行会被忽略。`static-units.conf` 每行使用 `repository unit_id site_id health_base_url` 格式；只有在相应 vhost 已指向 `/opt/deploy/static/<site_id>/current` 且健康 URL 可从部署节点访问后，才启用对应行。编辑
 `.env` 时必须填写实际的 WebDAV 地址和凭据，不要把凭据提交到 Git。常用配置项：
 
 - `WEBDAV_PACKAGE_BASE_URL`、`WEBDAV_PACKAGE_AK`、`WEBDAV_PACKAGE_SK`：制品目录和认证信息。
@@ -49,19 +59,20 @@ chmod 600 .env
 
 ### 编译并上传制品
 
-在编译节点确认模块仓库没有需要保留的本地改动后执行：
+自动打包已停用。无参数调用为空操作退出以兼容旧定时项；人工或受控 release workflow 必须显式执行：
 
 ```bash
 cd /root/code/deployer/operator/upgrade
-./compile_packages.sh
+RELEASE_VERSION=1.2.3 ./compile_packages.sh --publish
 ```
 
-编译脚本会把模块仓库同步到 `origin/main`，并可能执行
-`git reset --hard origin/main` 和 `git clean -fd`。模块仓库必须提供
-`scripts/package.sh`，产物应位于项目根目录的 `output/`，并符合：
+发布前仓库必须干净且与 `origin/main` 一致；脚本遇到本地改动或提交差异应失败，不得用
+`git reset --hard` 或 `git clean -fd` 清理工作区。模块仓库必须提供 `scripts/package.sh` 和
+声明标准参数/无 Git 写入能力的 `scripts/package-api.json`。构建在临时 detached worktree 和空输出目录中运行，
+输出目录不会写入模块仓库。manifest 可以包含一个或多个服务、静态、桌面 artifact；当前 `upgrade.sh` 仍只升级 `modules.conf` 中配置且包名前缀匹配的 legacy 服务单元。已填入 `static-units.conf` 的静态 artifact 会经 manifest 校验和独立静态处理器部署；未配置的静态单元与所有 desktop artifact 只会被校验和上传。服务单元包名为：
 
 ```text
-<module>-v<major>.<minor>.<patch>-<7-char-commit>.tar.gz
+<unit-id>-v<major>.<minor>.<patch>-<7-char-commit>.tar.gz
 ```
 
 ### 手动传输单个制品
@@ -100,6 +111,12 @@ less /opt/logs/upgrade.log
 否则可用 `fuser -v /tmp/operator-upgrade.lock` 查找打开该文件的进程，并确认其实际运行目录后再处理。
 `fuser` 只能列出打开文件的进程，不能单独证明进程持有锁；锁文件中记录的 PID 也不能作为锁状态依据。
 
+manifest 校验回归测试可在 deployer 仓库运行：
+
+```bash
+bash operator/upgrade/tests/test_package_manifest.sh
+```
+
 ## 项目升级钩子
 
 纳入统一升级流程的每个安装包必须包含可执行的 `scripts/upgrade.sh`，接口固定为：
@@ -137,7 +154,7 @@ bash scripts/upgrade.sh <prepare|copy-config|post-copy|finalize> <current-dir> <
 
 ## 升级后检查
 
-升级完成后至少确认：
+服务升级完成后至少确认：
 
 ```bash
 readlink -f /opt/deploy/<module>
@@ -145,12 +162,11 @@ cd /opt/deploy/<module>
 bash scripts/health-check.sh --level all
 ```
 
-同时检查 `/opt/logs/upgrade.log`、服务进程、端口和核心功能。`warehouse` 前端升级
-还要确认 `/usr/share/nginx/html/webdav` 内容已更新且 Nginx 重启成功。
+同时检查 `/opt/logs/upgrade.log`、服务进程、端口和核心功能。静态站点升级后确认 `readlink -f /opt/deploy/static/<site_id>/current` 指向目标版本，并通过 `static-units.conf` 中的 URL 检查入口。尚未迁移的 warehouse 旧 hook 仍需确认 `/usr/share/nginx/html/webdav` 内容已更新且 Nginx 重启成功。
 
 ## 失败与回退
 
-`upgrade.sh` 不执行自动降级。失败后先查看日志和当前软链接，再决定重试或手动回退；
+服务单元仍不执行自动降级。静态单元在 HTTP 检查失败时会自动恢复之前的 `current` 指向。其他失败后先查看日志和当前软链接，再决定重试或手动回退；
 不要仅以进程存在判断升级成功。如果失败发生在目标服务已启动但软链接更新之前，
 实际运行目录可能已经是目标目录，而 `/opt/deploy/<module>` 仍指向旧目录。
 

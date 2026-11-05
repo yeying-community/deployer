@@ -5,6 +5,7 @@ output/
 openapitools.json
 script/typescript/apidocs.openapi.json
 scripts/upgrade/modules.conf
+operator/upgrade/package_modules.conf
 scripts/upgrade/.env
 *.tar.gz
 apidocs.openapi.json
@@ -13,13 +14,8 @@ nohup.out
 *.bak
 *.pem
 .codex
+__pycache__
 
-# Project skill local task state
-.project-task.json
-.project-lifecycle.json
-.project-execution.json
-.project-execution/
-.project-task-*.json
-.project-lifecycle-*.json
-.project-execution-*.json
-.project-execution-*/
+# YeYing Project local task state
+/.project/
+.playwright-cli
