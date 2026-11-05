@@ -122,7 +122,7 @@ jq -e '
 
 按社区的正式版本规则，PR 合并后由有权限的发布负责人（或经过批准的独立 release workflow）完成版本审批和源码标记：确定版本与精确 commit，创建并推送不可移动的 `vX.Y.Z` tag；随后用同一个版本发布制品。该动作属于显式 release 流程，不应由普通代码 push、测试环境轮询或每次打包自动触发。若一次发布涉及多个源码仓库，各仓库分别在其发布 commit 上建立对应 tag。
 
-当前 `compile_packages.sh --publish` 要求源码仓库处于干净的 `main`，且 `main` 与 `origin/main` 一致；它随后构建这个提交，而不是按 tag 查找提交。因此发布负责人必须保证 tag 指向的 commit 与实际构建 commit 一致，并核对 manifest 的 `source_commit`。tag 已创建而构建失败时，应修复原因后用相同 tag、版本和 commit 重试；不得移动或覆盖已有 tag。如果 `main` 已前进而不再等于 tag commit，当前发布器不能直接重建旧 tag，应停止本次发布，先通过显式固定 ref 的发布流程补齐能力或重新审批一个新版本。
+当前 `compile_packages.sh --publish` 要求源码仓库处于干净的 `main`，fetch 后会尝试将其安全 fast-forward 到 `origin/main`，然后构建同步后的提交，而不是按 tag 查找提交。因此发布负责人必须在开始发布时确认 tag 指向的 commit 与同步后的 `origin/main` 一致，并核对 manifest 的 `source_commit`。tag 已创建而构建失败时，应修复原因后用相同 tag、版本和 commit 重试；不得移动或覆盖已有 tag。如果 `main` 已前进到 tag commit 之后，当前发布器不能直接重建旧 tag，应停止本次发布，先通过显式固定 ref 的发布流程补齐能力或重新审批一个新版本。
 
 示例：在每个本次正式发布的源码仓库中，由发布负责人确认 tag 尚不存在、`origin/main` 已是批准的 release commit，并配置好指向社区主仓库的 `RELEASE_REMOTE` 后执行：
 
@@ -222,7 +222,7 @@ cd /path/to/deployer/operator/upgrade
 RELEASE_VERSION=1.2.3 ./compile_packages.sh --publish
 ```
 
-发布前，`package_modules.conf` 列出的每个仓库必须位于干净的 `main`，且与 `origin/main` 一致。构建器逐仓检查 `scripts/package-api.json`，为选定 commit 创建 detached worktree 和空临时输出目录，再调用：
+发布前，`package_modules.conf` 列出的每个仓库必须位于干净的 `main`。构建器逐仓 fetch `origin/main`，仅在可安全快进时自动同步；遇到脏工作区、本地独有提交或分叉时停止，不会清理用户数据。同步后构建器检查 `scripts/package-api.json`，为选定 commit 创建 detached worktree 和空临时输出目录，再调用：
 
 ```bash
 bash scripts/package.sh \

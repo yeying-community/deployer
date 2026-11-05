@@ -497,10 +497,20 @@ sync_main_latest() {
         return 1
     fi
 
+    # Keep the persistent checkout useful for operators while only allowing a
+    # safe fast-forward. Local commits or divergence make merge --ff-only fail;
+    # dirty worktrees were rejected above. Never reset or clean user data.
+    log "sync ${module_name}: fast-forward main to origin/main when needed"
+    if ! git -C "$module_dir" merge --ff-only refs/remotes/origin/main >> "$LOGFILE" 2>&1; then
+        log "ERROR! refusing to build ${module_name}: main cannot fast-forward to origin/main; inspect local commits and branch history"
+        return 1
+    fi
+    log "sync ${module_name}: main is aligned with origin/main"
+
     current_commit=$(git -C "$module_dir" rev-parse HEAD) || return 1
     remote_commit=$(git -C "$module_dir" rev-parse refs/remotes/origin/main) || return 1
     if [[ "$current_commit" != "$remote_commit" ]]; then
-        log "ERROR! refusing to build ${module_name}: main differs from origin/main; sync it explicitly and retry"
+        log "ERROR! refusing to build ${module_name}: main does not match origin/main after fast-forward"
         return 1
     fi
 

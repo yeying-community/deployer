@@ -149,7 +149,7 @@ chat-v1.2.3-a1b2c3d.tar.gz
 
 `operator/upgrade/compile_packages.sh --publish` 的主要行为：
 
-1. 读取 `operator/upgrade/package_modules.conf`（缺失时兼容回退到 `modules.conf`），要求每个仓库工作区干净、位于 `main` 且与 `origin/main` 完全一致。
+1. 读取 `operator/upgrade/package_modules.conf`（缺失时兼容回退到 `modules.conf`），要求每个仓库工作区干净并位于 `main`；fetch `origin/main` 后仅允许安全 fast-forward 自动同步，遇到本地提交或分叉则停止。
 2. 创建指向当前 commit 的临时 detached worktree 和空输出目录。
 3. 要求 `scripts/package.sh` 声明安全 API，并传入明确的 `--ref`、`--version`、`--output-dir`。
 4. 校验 manifest 的 repository、版本、commit、artifact ID、类型、归档路径、SHA-256 和包结构。
@@ -161,7 +161,7 @@ chat-v1.2.3-a1b2c3d.tar.gz
 注意事项：
 
 - 不带 `--publish` 的调用仅报告自动打包已停用，不构建、不上传；CI 必须绑定人工批准的 release 事件，不能由普通代码 push 或周期扫描触发。
-- 构建器和项目脚本不得对持久模块工作区执行 `git reset --hard` 或 `git clean -fd`。执行发布前检查 `main` 工作区干净且与 `origin/main` 一致；脏工作区或版本不同必须失败并提示修复，禁止清理用户数据。
+- 构建器和项目脚本不得对持久模块工作区执行 `git reset --hard` 或 `git clean -fd`。执行发布前要求 `main` 工作区干净；构建器可将其安全 fast-forward 到 `origin/main`，脏工作区、本地独有提交或分叉必须失败并提示修复，禁止清理用户数据。
 - 模块仓库必须提供 `scripts/package.sh`，并逐步迁移到 `--ref`、`--version` 和 `release-manifest.json` 契约。
 - 当前构建输出位于编译节点临时目录；不会写入模块仓库的 `output/`。
 - 传统服务升级流程仍使用 legacy 包名选择，尚未消费 manifest 中的服务 artifact。static 流程只处理显式配置的站点；真实环境使用前应完成站点迁移和演练。

@@ -66,7 +66,7 @@ cd /root/code/deployer/operator/upgrade
 RELEASE_VERSION=1.2.3 ./compile_packages.sh --publish
 ```
 
-发布前仓库必须干净且与 `origin/main` 一致；脚本遇到本地改动或提交差异应失败，不得用
+发布前仓库必须是干净的 `main`。脚本会 fetch `origin/main`，并仅在可安全快进时自动同步；存在未提交改动、本地独有提交或分叉时会停止，不会用
 `git reset --hard` 或 `git clean -fd` 清理工作区。模块仓库必须提供 `scripts/package.sh` 和
 声明标准参数/无 Git 写入能力的 `scripts/package-api.json`。构建在临时 detached worktree 和空输出目录中运行，
 输出目录不会写入模块仓库。manifest 可以包含一个或多个服务、静态、桌面 artifact；当前 `upgrade.sh` 仍只升级 `modules.conf` 中配置且包名前缀匹配的 legacy 服务单元。已填入 `static-units.conf` 的静态 artifact 会经 manifest 校验和独立静态处理器部署；未配置的静态单元与所有 desktop artifact 只会被校验和上传。服务单元包名为：
