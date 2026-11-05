@@ -10,7 +10,7 @@ deployer 不再提供 `upgrade_<module>.sh` 这类项目级升级脚本。
 纯静态与 desktop 单元不属于当前模块清单；跨项目现状见
 [`specification/PACKAGING_AUDIT.md`](../../specification/PACKAGING_AUDIT.md)。
 
-发布端用 `package_manifest.sh`（POSIX shell + `jq`）校验清单、SHA-256、归档结构和静态入口；显式发布环境需安装 `jq`、`tar` 和 `sha256sum` 或 `shasum`。`compile_packages.sh` 从 `package_modules.conf` 读取待构建仓库；若该文件不存在，则兼容回退到 `modules.conf`。`upgrade.sh` 继续从 `modules.conf` 读取服务升级单元；静态单元可通过单独的 `static-units.conf` 配置。
+发布端用 `package_manifest.sh`（POSIX shell + `jq`）校验清单、SHA-256、归档结构和静态入口；显式发布环境需安装 `jq`、`tar` 和 `sha256sum` 或 `shasum`。配置文件按用途命名：`package-modules.conf` 列出待构建源码仓库，`upgrade-modules.conf` 列出服务升级单元，`static-units.conf` 列出独立静态站点。各脚本只读取对应文件，不回退读取旧名称。
 编译器接受 manifest 中一个或多个 `service`、`service-with-assets`、`static` 或 `desktop` artifact，并校验、上传清单声明的全部制品。升级器对传统服务包仍使用兼容流程；配置后的静态单元会消费 manifest、校验制品并执行部署。清单驱动的服务选择仍未完成，desktop 单元不会由服务器升级器部署。
 
 独立发布的前端静态单元统一使用 `/opt/deploy/static/<site_id>`，Web 服务器 root 指向该目录下的 `current`，
@@ -21,9 +21,9 @@ deployer 不再提供 `upgrade_<module>.sh` 这类项目级升级脚本。
 
 | 脚本 | 运行位置 | 用途 | 配置 | 日志 |
 | --- | --- | --- | --- | --- |
-| `compile_packages.sh` | 编译节点 | 仅通过显式 `--publish` 事件构建、校验并上传制品 | `package_modules.conf`（缺省回退到 `modules.conf`）、`.env` | `/opt/logs/check-code-status.log` |
+| `compile_packages.sh` | 编译节点 | 仅通过显式 `--publish` 事件构建、校验并上传制品 | `package-modules.conf`、`.env` | `/opt/logs/check-code-status.log` |
 | `transfer_packages.sh` | 编译节点或服务节点 | 在 `/opt/package` 与 WebDAV 之间传输单个文件 | `.env` | `/opt/logs/transfer-packages.log` |
-| `upgrade.sh` | 服务部署节点 | 选择目标版本并执行统一升级流程，可选部署静态 unit | `modules.conf`、可选 `static-units.conf`、`.env` | `/opt/logs/upgrade.log` |
+| `upgrade.sh` | 服务部署节点 | 选择目标版本并执行统一升级流程，可选部署静态 unit | `upgrade-modules.conf`、可选 `static-units.conf`、`.env` | `/opt/logs/upgrade.log` |
 
 项目级 `scripts/upgrade.sh` 的输出也会合并到 `/opt/logs/upgrade.log`，日志按统一入口集中查看。
 
@@ -33,14 +33,17 @@ deployer 不再提供 `upgrade_<module>.sh` 这类项目级升级脚本。
 
 ```bash
 cd /root/code/deployer/operator/upgrade
-cp modules.conf.template modules.conf
-cp package_modules.conf.template package_modules.conf
+cp upgrade-modules.conf.template upgrade-modules.conf
+cp package-modules.conf.template package-modules.conf
 cp static-units.conf.template static-units.conf
 cp .env.template .env
 chmod 600 .env
 ```
 
-`modules.conf` 是服务升级名单，只放已有服务部署目录的模块。`package_modules.conf` 是源码仓库的打包名单，可以包含只发布静态或桌面 artifact 的仓库，两者不要求相同。每行填写一个仓库名；空行和以 `#` 开头的行会被忽略。`static-units.conf` 每行使用 `repository unit_id site_id health_base_url` 格式；只有在相应 vhost 已指向 `/opt/deploy/static/<site_id>/current` 且健康 URL 可从部署节点访问后，才启用对应行。编辑
+`upgrade-modules.conf` 是服务升级名单，只放已有服务部署目录的模块。`package-modules.conf` 是源码仓库的打包名单，可以包含只发布静态或桌面 artifact 的仓库，两者不要求相同。每行填写一个仓库名；空行和以 `#` 开头的行会被忽略。`static-units.conf` 每行使用 `repository unit_id site_id health_base_url` 格式；只有在相应 vhost 已指向 `/opt/deploy/static/<site_id>/current` 且健康 URL 可从部署节点访问后，才启用对应行。
+
+现有机器需迁移配置名：旧 `modules.conf` 的服务升级名单移至 `upgrade-modules.conf`；如果打包曾依赖回退读取 `modules.conf`，需把源码仓库清单单独写入 `package-modules.conf`；旧 `package_modules.conf` 改名为 `package-modules.conf`。脚本只读取新名称，不再兼容旧文件名。
+编辑
 `.env` 时必须填写实际的 WebDAV 地址和凭据，不要把凭据提交到 Git。常用配置项：
 
 - `WEBDAV_PACKAGE_BASE_URL`、`WEBDAV_PACKAGE_AK`、`WEBDAV_PACKAGE_SK`：制品目录和认证信息。
@@ -69,7 +72,7 @@ RELEASE_VERSION=1.2.3 ./compile_packages.sh --publish
 发布前仓库必须是干净的 `main`。脚本会 fetch `origin/main`，并仅在可安全快进时自动同步；存在未提交改动、本地独有提交或分叉时会停止，不会用
 `git reset --hard` 或 `git clean -fd` 清理工作区。模块仓库必须提供 `scripts/package.sh` 和
 声明标准参数/无 Git 写入能力的 `scripts/package-api.json`。构建在临时 detached worktree 和空输出目录中运行，
-输出目录不会写入模块仓库。manifest 可以包含一个或多个服务、静态、桌面 artifact；当前 `upgrade.sh` 仍只升级 `modules.conf` 中配置且包名前缀匹配的 legacy 服务单元。已填入 `static-units.conf` 的静态 artifact 会经 manifest 校验和独立静态处理器部署；未配置的静态单元与所有 desktop artifact 只会被校验和上传。服务单元包名为：
+输出目录不会写入模块仓库。manifest 可以包含一个或多个服务、静态、桌面 artifact；当前 `upgrade.sh` 仍只升级 `upgrade-modules.conf` 中配置且包名前缀匹配的 legacy 服务单元。已填入 `static-units.conf` 的静态 artifact 会经 manifest 校验和独立静态处理器部署；未配置的静态单元与所有 desktop artifact 只会被校验和上传。服务单元包名为：
 
 ```text
 <unit-id>-v<major>.<minor>.<patch>-<7-char-commit>.tar.gz
@@ -86,7 +89,7 @@ RELEASE_VERSION=1.2.3 ./compile_packages.sh --publish
 
 ### 执行升级
 
-`upgrade.sh` 不接受位置参数，按 `modules.conf` 中的顺序处理模块：
+`upgrade.sh` 不接受位置参数，按 `upgrade-modules.conf` 中的顺序处理模块：
 
 ```bash
 ./upgrade.sh

@@ -1,3 +1,6 @@
 .env
 modules.conf
+package_modules.conf
+package-modules.conf
+upgrade-modules.conf
 static-units.conf

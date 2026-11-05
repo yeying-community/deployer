@@ -8,3 +8,4 @@ work/
 # Host-specific production configuration.
 analyzer.conf
 modules.conf
+analyzer-modules.conf

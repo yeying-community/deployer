@@ -33,7 +33,7 @@
 
 ## 跨项目共性
 
-- 11 个仓库现在都有仓库级 `scripts/package.sh` 和 package API；`compile_packages.sh` 可从独立 `package_modules.conf` 接收与升级名单不同的仓库清单，并校验/上传多 artifact 和 static-only manifest。该配置文件需在发布节点从模板创建。
+- 11 个仓库现在都有仓库级 `scripts/package.sh` 和 package API；`compile_packages.sh` 可从独立 `package-modules.conf` 接收与升级名单不同的仓库清单，并校验/上传多 artifact 和 static-only manifest。该配置文件需在发布节点从模板创建。
 - 8 个旧服务包脚本已迁移到新 API；node、router、chat、project、orchestrator 的 smoke 入口和 knowledge、orchestrator 的 health check 会进入服务包。Homepage 静态包和 Billing Go 服务包已完成干净构建；其他产品的生产构建、服务运行环境和服务器升级验收仍未执行。静态单元不要求服务型 `starter.sh`。
 - 统一升级清单当前仅含 chat、node、project、router、social、warehouse、billing；knowledge 和 orchestrator 尚未接入。静态资源与桌面产物不能直接塞入当前服务升级清单。
 - 统一升级器的服务单元选择仍使用 legacy 包名，尚未按 manifest 选择服务 artifact；static 单元已有独立处理器，可从 `static-units.conf` 读取站点、消费 manifest、校验 SHA-256 和归档、原子切换 `current`，并在 HTTP 检查失败时恢复旧指向。Homepage 已完成本机版本切换和回滚演练；Homepage、Books 和 warehouse 的真实站点部署仍待 vhost 迁移与环境演练；desktop 暂无服务器部署处理器。
@@ -54,7 +54,7 @@
 
 ## Deployer 实施状态
 
-当前仓库提供 `package_manifest.sh`（POSIX shell + `jq`）进行 manifest、摘要、归档结构和静态入口校验；显式发布需安装 `jq`、`tar` 和 `sha256sum` 或 `shasum`。`compile_packages.sh` 无参数时不再加载运行环境；显式发布要求项目声明安全 package API，并在临时 detached worktree 中生成和校验制品。打包仓库名单可通过独立的 `package_modules.conf` 配置，因此静态-only 仓库也能进入发布构建，而无需加入服务升级清单。
+当前仓库提供 `package_manifest.sh`（POSIX shell + `jq`）进行 manifest、摘要、归档结构和静态入口校验；显式发布需安装 `jq`、`tar` 和 `sha256sum` 或 `shasum`。`compile_packages.sh` 无参数时不再加载运行环境；显式发布要求项目声明安全 package API，并在临时 detached worktree 中生成和校验制品。打包仓库名单可通过独立的 `package-modules.conf` 配置，因此静态-only 仓库也能进入发布构建，而无需加入服务升级清单。
 
 所有 11 个仓库均已迁移包脚本 API。`upgrade.sh` 已增加可选静态单元处理：从 `static-units.conf` 读取已配置站点，消费版本 manifest，校验制品 SHA-256 和归档，部署到标准静态目录并执行 HTTP 检查；检查失败会恢复原 `current` 软链接。desktop 尚无服务器部署处理器。各服务的产品构建、包外运行、测试/生产升级演练、站点 vhost 迁移，以及外部调度核验仍未完成，不能据此启用新发布链路。
 
@@ -68,7 +68,7 @@
 | `homepage-tidukongjian` | `tidukongjian/`；使用锁文件执行 `npm ci`，再运行 `npm run build`；Next 静态导出配置 `distDir: "output"` | `tidukongjian/output/` | 最终制品：`output/homepage-tidukongjian-v<version>-<commit>.tar.gz`；`site_id: homepage-tidukongjian`；部署根目录 `/opt/deploy/static/homepage-tidukongjian`，现有 Nginx root 需要迁移 |
 | `homepage-wallet` | 直接收集 `wallet/`，无需前端构建 | `index.html`、`main.js`、`assets/`、`docs/`、`robots.txt`、`sitemap.xml` 等完整静态目录 | 最终制品：`output/homepage-wallet-v<version>-<commit>.tar.gz`；`site_id: homepage-wallet`；域名为 `wallet.yeying.pub`，部署根目录 `/opt/deploy/static/homepage-wallet` |
 
-`homepage/scripts/package.sh` 与 `scripts/package-api.json` 已实现上述三个单元：使用锁文件 `npm ci` 构建两个应用站并直接收集 wallet 静态文件；两个前端的构建产物分别写入 `yeying/output/` 和 `tidukongjian/output/`。完整 `package.sh` 已在干净 detached worktree 中成功执行，生成三个静态归档，`package_manifest.sh` 对 repository、source commit、version、摘要和归档结构的检查通过。`tidukongjian` 使用 `next/font/google`，Next.js 默认会请求 `fonts.googleapis.com`；打包脚本调用 `prepare_google_fonts_mirror.sh` 从 `fonts.googleapis.cn` 获取 CSS 响应映射，字体文件从 `fonts.gstatic.cn` 下载后由 Next.js 写入静态产物。该构建使用 Next.js 的 `NEXT_FONT_GOOGLE_MOCKED_RESPONSES` 钩子；修改字体名称/字重或升级 Next.js 时，必须同步更新并重新验证镜像映射。每个内容目录放入 `<unit-id>-v<version>-<7-char-commit>/`，计算 tarball SHA-256，并在同一份 manifest 中记录三个 artifact。直接在项目工作区打包时，统一传入 `--output-dir output`，最终归档和 `release-manifest.json` 写入仓库根目录的 `output/`；编译器在隔离 worktree 中构建时传入独立临时目录。静态仓库通过独立的 `package_modules.conf` 接入发布；部署前仍需将 vhost 迁移并填入、验证 `static-units.conf`。
+`homepage/scripts/package.sh` 与 `scripts/package-api.json` 已实现上述三个单元：使用锁文件 `npm ci` 构建两个应用站并直接收集 wallet 静态文件；两个前端的构建产物分别写入 `yeying/output/` 和 `tidukongjian/output/`。完整 `package.sh` 已在干净 detached worktree 中成功执行，生成三个静态归档，`package_manifest.sh` 对 repository、source commit、version、摘要和归档结构的检查通过。`tidukongjian` 使用 `next/font/google`，Next.js 默认会请求 `fonts.googleapis.com`；打包脚本调用 `prepare_google_fonts_mirror.sh` 从 `fonts.googleapis.cn` 获取 CSS 响应映射，字体文件从 `fonts.gstatic.cn` 下载后由 Next.js 写入静态产物。该构建使用 Next.js 的 `NEXT_FONT_GOOGLE_MOCKED_RESPONSES` 钩子；修改字体名称/字重或升级 Next.js 时，必须同步更新并重新验证镜像映射。每个内容目录放入 `<unit-id>-v<version>-<7-char-commit>/`，计算 tarball SHA-256，并在同一份 manifest 中记录三个 artifact。直接在项目工作区打包时，统一传入 `--output-dir output`，最终归档和 `release-manifest.json` 写入仓库根目录的 `output/`；编译器在隔离 worktree 中构建时传入独立临时目录。静态仓库通过独立的 `package-modules.conf` 接入发布；部署前仍需将 vhost 迁移并填入、验证 `static-units.conf`。
 
 静态制品部署在 `/opt/deploy/static/<site_id>/releases/<package_root>`，站点稳定目录 `/opt/deploy/static/<site_id>/current` 通过原子软链接指向当前版本。部署器使用 GNU/BSD 对应的 `mv` 参数替换已有 `current`，并在 HTTP 检查前确认链接确实指向目标 release；检查失败会恢复旧指向，旧版本目录保留供人工回退。本机临时 HTTP 演练已验证从 `v0.0.0` 升至 `v0.0.1`、目标页面返回 200，以及 `v0.0.2` 健康检查失败后仍指回 `v0.0.1`。`tidukongjian` 需要把现有 Nginx root 迁移至 `/opt/deploy/static/homepage-tidukongjian/current`；`yeying` 和 `wallet` 仍需确认实际 Nginx/静态宿主和 vhost。实际部署服务器的 `upgrade.sh` 轮询、线上 URL、vhost 和升级仍未验证。
 

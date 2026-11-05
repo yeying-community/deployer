@@ -1,4 +1,4 @@
-# Repositories built by compile_packages.sh; independent from modules.conf,
+# Repositories built by compile_packages.sh; independent from upgrade-modules.conf,
 # which remains the service upgrade list consumed by upgrade.sh.
 node
 warehouse

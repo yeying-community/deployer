@@ -222,7 +222,7 @@ cd /path/to/deployer/operator/upgrade
 RELEASE_VERSION=1.2.3 ./compile_packages.sh --publish
 ```
 
-发布前，`package_modules.conf` 列出的每个仓库必须位于干净的 `main`。构建器逐仓 fetch `origin/main`，仅在可安全快进时自动同步；遇到脏工作区、本地独有提交或分叉时停止，不会清理用户数据。同步后构建器检查 `scripts/package-api.json`，为选定 commit 创建 detached worktree 和空临时输出目录，再调用：
+发布前，`package-modules.conf` 列出的每个仓库必须位于干净的 `main`。构建器逐仓 fetch `origin/main`，仅在可安全快进时自动同步；遇到脏工作区、本地独有提交或分叉时停止，不会清理用户数据。同步后构建器检查 `scripts/package-api.json`，为选定 commit 创建 detached worktree 和空临时输出目录，再调用：
 
 ```bash
 bash scripts/package.sh \
@@ -248,7 +248,7 @@ flowchart TD
     A[合并并选定 commit] --> B{负责人批准 release}
     B -->|否| X[不构建、不上传]
     B -->|是| C[显式 compile_packages.sh --publish]
-    C --> D[检查 package_modules.conf 仓库状态]
+    C --> D[检查 package-modules.conf 仓库状态]
     D --> E[检查 scripts/package-api.json]
     E --> F[detached worktree + 空临时目录]
     F --> G[调用 package.sh ref / version / output-dir]
@@ -256,7 +256,7 @@ flowchart TD
     H --> I[校验类型、命名、SHA-256 和归档结构]
     I --> J[上传归档和版本化 manifest]
     J --> K{制品类型}
-    K -->|service 或 service-with-assets| L[测试环境 upgrade.sh / modules.conf]
+    K -->|service 或 service-with-assets| L[测试环境 upgrade.sh / upgrade-modules.conf]
     K -->|static| M[测试环境 upgrade.sh / static-units.conf]
     K -->|desktop| N[产品自己的桌面分发和更新通道]
     L --> O[健康检查，再运行 smoke 验收]
@@ -271,7 +271,7 @@ flowchart TD
 
 ### `service`：独立服务
 
-以 `billing` 为例，manifest 中 `unit_id` 为 `billing`、`type` 为 `service`。包内包含服务运行代码、运行依赖、配置模板、starter、health check、smoke test 和纳入统一升级所需的 `scripts/upgrade.sh`。测试环境的 `modules.conf` 配置 `billing` 后，执行 `upgrade.sh`；生产环境在测试通过和审批后手动执行同一入口。
+以 `billing` 为例，manifest 中 `unit_id` 为 `billing`、`type` 为 `service`。包内包含服务运行代码、运行依赖、配置模板、starter、health check、smoke test 和纳入统一升级所需的 `scripts/upgrade.sh`。测试环境的 `upgrade-modules.conf` 配置 `billing` 后，执行 `upgrade.sh`；生产环境在测试通过和审批后手动执行同一入口。
 
 当前服务升级器使用兼容的模块包名前缀选择归档，再下载、校验（配置了 `FILE_VERIFY` 时校验 sidecar）、解压到 `/opt/deploy/billing-v...`、执行升级 hook、停止旧服务、迁移配置、启动新服务并运行 `health-check.sh --level all`，成功后更新 `/opt/deploy/billing` 软链接。升级后还应执行：
 
@@ -280,18 +280,18 @@ cd /opt/deploy/billing
 bash scripts/test.sh --suite smoke
 ```
 
-目前 `upgrade.sh` 不自动调用 `test.sh`，也不自动回退服务。smoke 失败或服务启动/健康检查失败时，运维需按项目已验证的回退步骤恢复旧版本并重新检查；不能把旧版本目录仍存在等同于自动回滚成功。服务升级器尚未按 manifest 选择 service artifact，因此新归档还必须保持和 `modules.conf` 一致的 legacy 包名前缀。
+目前 `upgrade.sh` 不自动调用 `test.sh`，也不自动回退服务。smoke 失败或服务启动/健康检查失败时，运维需按项目已验证的回退步骤恢复旧版本并重新检查；不能把旧版本目录仍存在等同于自动回滚成功。服务升级器尚未按 manifest 选择 service artifact，因此新归档还必须保持和 `upgrade-modules.conf` 一致的 legacy 包名前缀。
 
 完整操作顺序示例：
 
 ```text
 # 构建节点：加入待构建源码仓库
-printf '%s\n' billing >> /path/to/deployer/operator/upgrade/package_modules.conf
+printf '%s\n' billing >> /path/to/deployer/operator/upgrade/package-modules.conf
 cd /path/to/deployer/operator/upgrade
 RELEASE_VERSION=1.2.3 ./compile_packages.sh --publish
 
 # 测试部署节点：只填写已经首次安装且有当前版本目录的服务单元
-printf '%s\n' billing > /path/to/deployer/operator/upgrade/modules.conf
+printf '%s\n' billing > /path/to/deployer/operator/upgrade/upgrade-modules.conf
 cd /path/to/deployer/operator/upgrade
 ./upgrade.sh
 
@@ -309,13 +309,13 @@ cd /path/to/deployer/operator/upgrade
 
 ### `service-with-assets`：后端和前端必须同版本
 
-以 `node` 为例，后端 API 与 web 前端必须一起发布、一起回滚，因此 manifest 中使用一个 `unit_id: node`、`type: service-with-assets`，单个归档包含两者。`package_modules.conf` 配置源码仓库 `node`；通过准入验收后，测试和生产的服务升级名单 `modules.conf` 也配置 `node`。升级步骤与 `service` 相同，前端随服务包一起启停和回退，不能拆成独立 static unit。
+以 `node` 为例，后端 API 与 web 前端必须一起发布、一起回滚，因此 manifest 中使用一个 `unit_id: node`、`type: service-with-assets`，单个归档包含两者。`package-modules.conf` 配置源码仓库 `node`；通过准入验收后，测试和生产的服务升级名单 `upgrade-modules.conf` 也配置 `node`。升级步骤与 `service` 相同，前端随服务包一起启停和回退，不能拆成独立 static unit。
 
 ```text
-# package_modules.conf
+# package-modules.conf
 node
 
-# 测试/生产节点 modules.conf（前提：该服务已按模块名首次部署）
+# 测试/生产节点 upgrade-modules.conf（前提：该服务已按模块名首次部署）
 node
 
 # 构建并发布
@@ -331,19 +331,19 @@ bash scripts/health-check.sh --level all
 bash scripts/test.sh --suite smoke
 ```
 
-这只产生并部署一个 `node` unit。manifest 中的类型是 `service-with-assets`，但现有 `modules.conf` 兼容服务升级器仍按 `node-v...` 包名工作；必须在准入时确认包名与当前 legacy 选择规则兼容，并人工执行 smoke 与失败回退演练。
+这只产生并部署一个 `node` unit。manifest 中的类型是 `service-with-assets`，但现有 `upgrade-modules.conf` 兼容服务升级器仍按 `node-v...` 包名工作；必须在准入时确认包名与当前 legacy 选择规则兼容，并人工执行 smoke 与失败回退演练。
 
 如果前端可以独立更新和回滚，应改用独立 `static` unit；只有版本必须绑定时才使用 `service-with-assets`。
 
 ### `static`：独立网站
 
-以 Homepage 的 `homepage-tidukongjian` 为例：源码仓库 `homepage` 的 `package.sh` 构建站点，并在 manifest 声明 `unit_id: homepage-tidukongjian`、`type: static`、唯一 `site_id: homepage-tidukongjian`、健康入口 `/index.html`。`package_modules.conf` 配置 `homepage`。测试环境准备好 Nginx 后，将其 root 迁移到 `/opt/deploy/static/homepage-tidukongjian/current`；确认健康 URL 可访问后，才在 `static-units.conf` 启用：
+以 Homepage 的 `homepage-tidukongjian` 为例：源码仓库 `homepage` 的 `package.sh` 构建站点，并在 manifest 声明 `unit_id: homepage-tidukongjian`、`type: static`、唯一 `site_id: homepage-tidukongjian`、健康入口 `/index.html`。`package-modules.conf` 配置 `homepage`。测试环境准备好 Nginx 后，将其 root 迁移到 `/opt/deploy/static/homepage-tidukongjian/current`；确认健康 URL 可访问后，才在 `static-units.conf` 启用：
 
 ```text
-# package_modules.conf
+# package-modules.conf
 homepage
 
-# modules.conf 不添加 homepage：它不是后台服务。
+# upgrade-modules.conf 不添加 homepage：它不是后台服务。
 
 # 先迁移相应 Nginx server block 的 root：
 root /opt/deploy/static/homepage-tidukongjian/current;
@@ -373,7 +373,7 @@ Homepage 的 Nginx 配置目前仍有旧 root，不能只把上面的行加入 `
 
 ### `desktop`：桌面安装或更新包
 
-桌面项目可以把签名后的安装器/更新资源作为 `type: desktop` artifact 写入 manifest，由 `compile_packages.sh` 校验、上传归档和清单。该 artifact **不加入**服务 `modules.conf` 或静态 `static-units.conf`；服务器升级器拒绝安装桌面包。
+桌面项目可以把签名后的安装器/更新资源作为 `type: desktop` artifact 写入 manifest，由 `compile_packages.sh` 校验、上传归档和清单。该 artifact **不加入**服务 `upgrade-modules.conf` 或静态 `static-units.conf`；服务器升级器拒绝安装桌面包。
 
 桌面端的后续流程由产品分发通道负责：客户端获取与自身平台匹配的版本，验证签名和摘要，在暂存目录安装/替换，迁移应用数据，启动新版本并执行桌面 smoke 检查；失败时恢复上一个可启动版本。负责签名密钥、应用商店/下载渠道、平台兼容和回滚的 updater 尚未由本规范中的 deployer 实现。未有这条产品链路前，桌面包即使成功上传也不代表已经部署或可升级。
 

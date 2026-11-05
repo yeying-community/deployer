@@ -7,7 +7,7 @@ project_root="$(cd "$script_dir/.." && pwd)"
 notify_common_sh="$project_root/feishu-notify/common.sh"
 # 固定配置（按当前发布流程约定）
 REPO_BASE="/root/code"
-MODULES_CONF="$script_dir/modules.conf"
+MODULES_CONF="$script_dir/release-notes-modules.conf"
 TAG_GLOB="v[0-9]*.[0-9]*.[0-9]*"
 CODEX_BIN="${RELEASE_NOTES_CODEX_BIN:-codex}"
 ARCHIVE_DIR="/opt/package"
@@ -105,7 +105,7 @@ trim() {
 
 read_modules() {
   local conf="$1"
-  [[ -f "$conf" ]] || fail "modules.conf 不存在：$conf"
+  [[ -f "$conf" ]] || fail "release-notes-modules.conf 不存在：$conf"
 
   local line module
   while IFS= read -r line || [[ -n "$line" ]]; do

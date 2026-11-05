@@ -42,8 +42,7 @@ init_log_file "check-code-status.log"
 lock_file="${COMPILE_PACKAGES_LOCK_FILE:-/tmp/operator-compile-packages.lock}"
 lock_notice_file="${COMPILE_PACKAGES_LOCK_NOTICE_FILE:-${lock_file}.notice}"
 lock_notice_interval="${COMPILE_PACKAGES_LOCK_NOTICE_INTERVAL_SECONDS:-300}"
-config_file="${script_dir}/modules.conf"
-package_config_file="${script_dir}/package_modules.conf"
+package_config_file="${script_dir}/package-modules.conf"
 env_file="${script_dir}/.env"
 code_root="/root/code"
 package_root="/opt/package"
@@ -172,7 +171,7 @@ ensure_release_notes_codex() {
 usage() {
     log "Usage: $0 --publish"
     log "Without --publish, automatic package build and upload are disabled."
-    log "With --publish, read repositories from ${package_config_file} (or ${config_file} for compatibility), then build, validate, and upload their artifacts."
+    log "With --publish, read repositories from ${package_config_file}, then build, validate, and upload their artifacts."
 }
 
 if [[ -z "${notify_from}" ]]; then
@@ -458,17 +457,10 @@ notify_upload_failure() {
 
 validate_file_verify_config || exit 1
 
-if [[ -f "$package_config_file" ]]; then
-    load_modules "$package_config_file" || {
-        usage
-        exit 1
-    }
-else
-    load_modules "$config_file" || {
+load_modules "$package_config_file" || {
     usage
     exit 1
-    }
-fi
+}
 
 release_version="${RELEASE_VERSION:-}"
 if [[ ! "$release_version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
