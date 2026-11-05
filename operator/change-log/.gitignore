@@ -2,3 +2,4 @@
 __pycache__/
 *.pyc
 .conf
+release-notes-modules.conf

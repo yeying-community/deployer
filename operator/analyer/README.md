@@ -53,10 +53,13 @@ ${YEYING_OPS_HOME}/scripts/ops_workflow.py
 ```bash
 cd /root/code/deployer/operator/analyer
 cp analyzer.conf.example analyzer.conf
-cp modules.conf.example modules.conf
+cp analyzer-modules.conf.example analyzer-modules.conf
 chmod 700 /root/code/deployer/operator/analyer
-chmod 600 analyzer.conf modules.conf
+chmod 600 analyzer.conf analyzer-modules.conf
 ```
+
+`analyzer.conf` 的 `modules_file` 必须指向 `analyzer-modules.conf`。现有 `modules.conf`
+需改名，并同步更新 `modules_file`；运行时不会再读取旧名称。
 
 `analyzer.conf` 是 JSON。主要配置包括：
 
@@ -134,7 +137,7 @@ YEYING_OPS_HOME=/root/.codex/skills/yeying-ops \
 - `results/YYYY-MM-DD/summary.md`：人工日报。
 - `work/`：模型调用的临时输出，调用结束后删除。
 
-这些文件以及 `analyzer.conf`、`modules.conf` 都不得提交 Git。
+这些文件以及 `analyzer.conf`、`analyzer-modules.conf` 都不得提交 Git。
 
 ## 问题审计
 

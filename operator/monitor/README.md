@@ -4,19 +4,20 @@
 
 ```bash
 cd /root/code/deployer/operator/monitor
-cp modules.conf.template modules.conf
+cp monitor-modules.conf.template monitor-modules.conf
 cp .env.template .env
 chmod 600 .env
 ```
 
-`modules.conf` 每行一个模块名。`.env` 可设置 `NOTIFY_DINGDING`、`NOTIFY_FEISHU`、`DINGTALK_NEED_AT`、`NOTIFY_FROM`；通知凭据分别放在对应通知目录的 `.env` 中。`NOTIFY_FEISHU` 仅控制服务日志监控 `monitor.sh` 的飞书通知。
+`monitor-modules.conf` 每行一个模块名。`.env` 可设置 `NOTIFY_DINGDING`、`NOTIFY_FEISHU`、`DINGTALK_NEED_AT`、`NOTIFY_FROM`；通知凭据分别放在对应通知目录的 `.env` 中。`NOTIFY_FEISHU` 仅控制服务日志监控 `monitor.sh` 的飞书通知。
+已有 `modules.conf` 需改名为 `monitor-modules.conf`。
 
 ### `monitor.sh`
 
 - 运行位置：服务部署节点
 - 运行方式：通常配置为周期性任务执行
 - 输入参数：无
-- 配置文件：`modules.conf`、`.env`
+- 配置文件：`monitor-modules.conf`、`.env`
 - 作用：比较各模块当前部署目录中的错误日志增量，发现新增错误时发送钉钉/飞书告警，恢复后发送恢复通知
 - 日志文件：`/opt/logs/monitor.log`
 

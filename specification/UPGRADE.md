@@ -5,14 +5,14 @@
 ## 适用范围
 
 - 升级脚本面向已按命名规范部署到 `/opt/deploy` 的服务模块。
-- 主入口 `operator/upgrade/upgrade.sh` 会读取同脚本目录下的`operator/upgrade/modules.conf`来获取模块清单，检查 WebDAV 制品仓库中的最新安装包，并在远程版本高于本地当前版本时执行升级。
+- 主入口 `operator/upgrade/upgrade.sh` 会读取同脚本目录下的`operator/upgrade/upgrade-modules.conf`来获取模块清单，检查 WebDAV 制品仓库中的最新安装包，并在远程版本高于本地当前版本时执行升级。
 - 每个模块升级时会选取 WebDAV 制品仓库中对应版本号最大的文件 作为目标版本进行升级操作。
 - 通用升级生命周期由 `operator/upgrade/upgrade.sh` 完成；参与统一升级流程的模块必须在安装包内提供 `scripts/upgrade.sh`，只实现项目特有的升级动作。
 - 此操作并不适用于模块的首次部署操作，也就是说如果当前节点并没有对应的模块，需要先手动完成部署并验证项目的 `scripts/upgrade.sh`。
-- 测试环境由定时任务调用`deployer/operator/upgrade/upgrade.sh` 依据`operator/upgrade/modules.conf`的配置来完成对应模块的升级。
-- 生产环境的升级需要手动执行`deployer/operator/upgrade/upgrade.sh` 依据`operator/upgrade/modules.conf`的配置来完成对应模块的升级。
+- 测试环境由定时任务调用`deployer/operator/upgrade/upgrade.sh` 依据`operator/upgrade/upgrade-modules.conf`的配置来完成对应模块的升级。
+- 生产环境的升级需要手动执行`deployer/operator/upgrade/upgrade.sh` 依据`operator/upgrade/upgrade-modules.conf`的配置来完成对应模块的升级。
 
-当前 `modules.conf` 仍只登记服务型部署单元：`chat`、`node`、`project`、`router`、`social`、
+当前 `upgrade-modules.conf` 仍只登记服务型部署单元：`chat`、`node`、`project`、`router`、`social`、
 `warehouse` 和 `billing`；这不代表它们已通过新 manifest 契约验收。独立 static 单元通过可选的 `static-units.conf` 配置，不加入服务清单；desktop 制品不得由服务器升级器部署。完整跨项目现状见 [PACKAGING_AUDIT.md](./PACKAGING_AUDIT.md)。
 
 模块名称必须与安装包前缀、部署目录前缀和升级脚本约定一致。例如模块 `chat` 对应：
@@ -29,7 +29,7 @@
 
 1. 操作节点可以访问 WebDAV 制品仓库。
 2. `operator/upgrade/.env` 已正确配置。
-3. `operator/upgrade/modules.conf` 已填写待升级模块。
+3. `operator/upgrade/upgrade-modules.conf` 已填写待升级模块。
 4. 本地部署目录 `/opt/deploy` 下存在当前版本目录，且目录名符合 `模块名-v主版本.次版本.修订版本-7位commit` 格式。
 5. 当前版本目录和目标安装包存在 `scripts/starter.sh` 与 `scripts/upgrade.sh`，且目标升级脚本支持 `copy-config` 阶段。
 6. 如果目标安装包提供 `scripts/health-check.sh`，该脚本可在目标目录中执行；当前版本目录内存在项目升级脚本要求的配置文件。
@@ -83,9 +83,9 @@ FILE_VERIFY=""
 
 `FILE_VERIFY` 不为空时，打包脚本会生成并上传 `<package>.sha256sum` 或 `<package>.md5sum`，升级脚本会先下载校验文件，再校验安装包完整性。若校验失败，升级脚本会删除本地已下载安装包并中止该模块升级。
 
-### `modules.conf`
+### `upgrade-modules.conf`
 
-`operator/upgrade/modules.conf` 每行填写一个模块名，空行和 `#` 开头的注释行会被忽略：
+`operator/upgrade/upgrade-modules.conf` 每行填写一个模块名，空行和 `#` 开头的注释行会被忽略：
 
 ```text
 chat
@@ -101,11 +101,11 @@ billing
 
 ## 制品命名与版本选择
 
-`modules.conf` 目前仍使用服务模块名，兼容旧格式包。新发布制品统一按照
+`upgrade-modules.conf` 目前仍使用服务模块名，兼容旧格式包。新发布制品统一按照
 [`PACKAGING.md`](./PACKAGING.md) 中的 `release-manifest.json` 声明 artifact ID、类型、源 commit、文件和 SHA-256；升级器必须先验证清单和包校验，再按部署单元选择版本。未迁移到清单格式的旧包只能走明确的兼容期，不能据此接入新的 static 或多单元发布流程。
 
 当前实现状态：`compile_packages.sh` 会在发布前校验 manifest、每个包的 SHA-256 和包结构，并上传版本化 manifest。
-传统服务升级仍按 `modules.conf` 中的包名前缀选择版本，并使用可选 `FILE_VERIFY` sidecar；它尚未基于 manifest 选择服务 artifact。
+传统服务升级仍按 `upgrade-modules.conf` 中的包名前缀选择版本，并使用可选 `FILE_VERIFY` sidecar；它尚未基于 manifest 选择服务 artifact。
 另有独立静态流程：`static-units.conf` 中配置的站点会下载版本 manifest 及所列制品，用 `package_manifest.sh` 校验哈希和归档，再原子切换标准目录的 `current` 软链接；HTTP 健康检查失败时恢复原软链接。该流程仅在静态站点完成 vhost 迁移并配置健康 URL 后才会运行。跨 unit 独立版本选择、desktop 部署、真实站点升级和回滚演练仍未验收。
 
 ### 独立静态资源的统一部署目录
@@ -149,7 +149,7 @@ chat-v1.2.3-a1b2c3d.tar.gz
 
 `operator/upgrade/compile_packages.sh --publish` 的主要行为：
 
-1. 读取 `operator/upgrade/package_modules.conf`（缺失时兼容回退到 `modules.conf`），要求每个仓库工作区干净、位于 `main` 且与 `origin/main` 完全一致。
+1. 读取 `operator/upgrade/package-modules.conf`，要求每个仓库工作区干净并位于 `main`；fetch `origin/main` 后仅允许安全 fast-forward 自动同步，遇到本地提交或分叉则停止。
 2. 创建指向当前 commit 的临时 detached worktree 和空输出目录。
 3. 要求 `scripts/package.sh` 声明安全 API，并传入明确的 `--ref`、`--version`、`--output-dir`。
 4. 校验 manifest 的 repository、版本、commit、artifact ID、类型、归档路径、SHA-256 和包结构。
@@ -161,7 +161,7 @@ chat-v1.2.3-a1b2c3d.tar.gz
 注意事项：
 
 - 不带 `--publish` 的调用仅报告自动打包已停用，不构建、不上传；CI 必须绑定人工批准的 release 事件，不能由普通代码 push 或周期扫描触发。
-- 构建器和项目脚本不得对持久模块工作区执行 `git reset --hard` 或 `git clean -fd`。执行发布前检查 `main` 工作区干净且与 `origin/main` 一致；脏工作区或版本不同必须失败并提示修复，禁止清理用户数据。
+- 构建器和项目脚本不得对持久模块工作区执行 `git reset --hard` 或 `git clean -fd`。执行发布前要求 `main` 工作区干净；构建器可将其安全 fast-forward 到 `origin/main`，脏工作区、本地独有提交或分叉必须失败并提示修复，禁止清理用户数据。
 - 模块仓库必须提供 `scripts/package.sh`，并逐步迁移到 `--ref`、`--version` 和 `release-manifest.json` 契约。
 - 当前构建输出位于编译节点临时目录；不会写入模块仓库的 `output/`。
 - 传统服务升级流程仍使用 legacy 包名选择，尚未消费 manifest 中的服务 artifact。static 流程只处理显式配置的站点；真实环境使用前应完成站点迁移和演练。
@@ -191,7 +191,7 @@ bash transfer_packages.sh download chat-v1.2.3-a1b2c3d.tar.gz
 `operator/upgrade/upgrade.sh` 的执行流程：
 
 1. 校验 `operator/upgrade/.env`的`FILE_VERIFY` 配置。
-2. 读取 `operator/upgrade/modules.conf`。
+2. 读取 `operator/upgrade/upgrade-modules.conf`。
 3. 加载 WebDAV 配置并列出远程目录文件。
 4. 为每个模块选择远程最新安装包。
 5. 识别本地当前版本。
@@ -306,7 +306,7 @@ ln -sfn chat-v1.2.2-a1b2c3d /opt/deploy/chat
 
 | 现象 | 可能原因 | 处理方式 |
 | --- | --- | --- |
-| `modules.conf` 缺失或模块列表为空 | 未从模板复制配置，或只写了注释 | 创建 `modules.conf` 并填写模块名 |
+| `upgrade-modules.conf` 缺失或模块列表为空 | 未从模板复制配置，或只写了注释 | 创建 `upgrade-modules.conf` 并填写模块名 |
 | WebDAV 认证失败 | `WEBDAV_PACKAGE_AK/SK` 错误 | 修正 `.env` 后重试 |
 | 远程目录无安装包 | 制品未上传或模块名不匹配 | 执行打包上传，确认包名前缀与模块名一致 |
 | 版本解析失败 | 包名不符合规范 | 重命名或重新生成安装包 |
@@ -323,7 +323,7 @@ ln -sfn chat-v1.2.2-a1b2c3d /opt/deploy/chat
 
 升级前：
 
-- [ ] 确认目标模块已写入 `operator/upgrade/modules.conf`。
+- [ ] 确认目标模块已写入 `operator/upgrade/upgrade-modules.conf`。
 - [ ] 确认 `.env` 中 WebDAV 地址和认证信息正确。
 - [ ] 确认目标安装包和校验文件已上传到 WebDAV。
 - [ ] 确认当前版本部署目录和配置文件存在。

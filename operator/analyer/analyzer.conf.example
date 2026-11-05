@@ -1,7 +1,7 @@
 {
   "timezone": "Asia/Shanghai",
   "deploy_root": "/opt/deploy",
-  "modules_file": "/root/code/deployer/operator/analyer/modules.conf",
+  "modules_file": "/root/code/deployer/operator/analyer/analyzer-modules.conf",
   "error_log_name": "logs/error.log",
   "state_db": "/root/code/deployer/operator/analyer/state.db",
   "results_dir": "/root/code/deployer/operator/analyer/results",

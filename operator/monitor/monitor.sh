@@ -15,7 +15,7 @@ fi
 
 init_log_file "monitor.log"
 
-config_file="${script_dir}/modules.conf"
+config_file="${script_dir}/monitor-modules.conf"
 env_file="${script_dir}/.env"
 deploy_root="/opt/deploy"
 temp_dir="/tmp"
