@@ -111,8 +111,8 @@ jq -e '
 - `--version` 使用 `major.minor.patch`，不含 `v` 前缀。打包脚本不得自行 fetch/switch 调用方工作区、创建或推送 Git tag、上传制品、部署服务，也不得清理调用者的输出目录。
 - 构建器在隔离的 detached worktree/checkout 中准备源码，并在完成后移除该临时目录；不得对持久项目目录执行 `git reset --hard` 或 `git clean -fd`。
 - 如果引用、版本、依赖安装或构建失败，脚本必须非零退出，不得留下看似有效的半成品包。
-- 生产依赖必须由锁文件确定安装版本，例如 `npm ci`、`pnpm install --frozen-lockfile`、`composer install --no-dev --prefer-dist`。没有锁文件时必须先补齐锁文件或记录经批准的例外。
-- 每个构建都应校验工具版本和必需资源，输出可读错误；不要回退到会静默改写锁文件的依赖安装方式。
+- 生产依赖应由项目提交的锁文件确定安装版本，例如 `pnpm install --frozen-lockfile`、`composer install --no-dev --prefer-dist`。项目明确选择不跟踪 npm `package-lock.json` 时，打包使用 `npm install`；此方式会按当时 registry 可解析的版本安装依赖，构建结果可能随时间变化。
+- 每个构建都应校验工具版本和必需资源，输出可读错误。对提交锁文件的生态使用锁定安装方式；不跟踪 npm 锁文件的项目可使用 `npm install`，本地生成的 `package-lock.json` 不进入版本控制或发布包。
 
 `operator/upgrade/compile_packages.sh` 是显式发布入口。必须通过 `--publish` 人工或由明确的受控发布事件触发；无参数调用只报告自动打包已停用并成功退出。CI 若调用它，必须绑定已批准的 release 事件，而非普通 push、定时扫描或文件变更检测。发布入口运行期间持有锁，构建、校验和上传任一步失败都应返回非零。
 
