@@ -1,6 +1,6 @@
 # 社区项目打包兼容性审计
 
-本审计对应统一的[社区项目打包规范](./PACKAGING.md)。基线来自 2026-11-04 对 11 个仓库的文件静态检查。本轮为 11 个仓库补齐 v1 安全 package API 声明；8 个旧服务包脚本已改为显式 `--ref`、`--version`、`--output-dir` 并生成 manifest。Homepage 的完整打包已在干净 detached worktree 中通过；静态安装、版本切换、HTTP 检查和失败回滚已在本机临时部署目录中执行。其他产品完整构建、真实服务器升级和外部定时任务仍未验收。`scripts/upgrade.sh` 表示存在项目级 hook，不等于已经完成统一升级验收。
+本审计对应统一的[社区项目打包规范](./PACKAGING.md)。基线来自 2026-11-04 对 11 个仓库的文件静态检查。本轮为 11 个仓库补齐 v1 安全 package API 声明；8 个旧服务包脚本已改为显式 `--ref`、`--version`、`--output-dir` 并生成 manifest。Homepage 的完整静态打包和 Billing 的 Go service 打包均已在干净 detached worktree 中通过；静态安装、版本切换、HTTP 检查和失败回滚已在本机临时部署目录中执行。其余产品完整构建、真实服务器升级和外部定时任务仍未验收。`scripts/upgrade.sh` 表示存在项目级 hook，不等于已经完成统一升级验收。
 
 旧版部分项目 `package.sh` 曾自动递增 patch、创建并推送 tag 后打包；统一 v1 将 tag 创建移到正式 release 审批步骤，由有权限的发布负责人或独立 release workflow 执行。当前 `compile_packages.sh` 和项目 `package.sh` 都不创建 tag；发布前须确认 `vX.Y.Z` 指向将写入 manifest 的同一源码 commit。操作示例和当前 main-only 发布器的限制见 [PACKAGING.md 的 Git tag 说明](./PACKAGING.md#git-tag-何时创建)。
 
@@ -20,10 +20,10 @@
 | knowledge | API + web + worker | 有；v1 CLI | 有 / 有（service-with-assets） | 有 / 有 / 有（已随包声明；锁定 Python 依赖并随包提供虚拟环境，未做产品包验收） | 缺 | API、worker 和 web 当前按一个服务单元打包；有 health/smoke 入口并明确不自动纳入统一升级。仍需验证目标 Python/OS 对随包虚拟环境的兼容性，并决定是否接入统一升级。 |
 | orchestrator | backend、web、agent/runtime 资源 | 有；v1 CLI | 有 / 有（backend + web + agents 组合服务） | 有 / 有 / 有（smoke 覆盖 readiness、版本 API、控制台首页和未认证访问拒绝；未覆盖需测试身份的业务闭环） | 缺 | `test.sh` 保留是因为获批服务包契约要求独立 smoke 入口，不能与 readiness 健康检查合并；脚本已改为执行实际只读 HTTP 检查，不再只是转调 health-check。仍需确认 agent/runtime 是否应独立版本化，验证目标运行环境，并决定是否纳入统一升级。 |
 | books | 社区文档、reader、payment 应用等候选单元 | 有；reader 静态站显式 ref 构建 | 有 / 有（books-reader static；本轮 fixture 验证） | reader 不适用 / 不适用 / 静态入口待验收；`saas-mvp` 是否部署待确认 | 不适用 | 已按 README 确认 VitePress reader 是静态站并新增打包入口/API；`output/` 已忽略。Payment `saas-mvp` 是另一个 FastAPI 候选应用，但仓库未提供部署证据，尚未纳入制品或增加运行服务契约。 |
-| billing | Go 后端服务 | 有；v1 CLI | 有 / 有（service；fixture 验证） | 有 / 有 / 有 | 有 | 已迁移到显式 ref/version/output-dir；manifest、归档哈希和必需服务入口通过 fixture 校验。真实 Go 构建及测试环境部署仍待验收。 |
+| billing | Go 后端服务 | 有；v1 CLI | 有 / 有（service；clean package 验证） | 有 / 有 / 有 | 有 | 已在干净 worktree 编译 Linux amd64 服务包，manifest、SHA-256、归档结构和必需服务入口通过校验；包外运行、smoke 和目标服务器升级仍待验收。 |
 
 
-表中“package API / manifest”分别表示源码中的 `scripts/package-api.json` 声明和构建输出的 `release-manifest.json`。前者是一份每仓库一份、发布前读取的 v1 CLI 契约；后者是一份每次构建一份、记录真实制品的版本清单。所有仓库的 package API 与包脚本已迁移到统一参数；脚本语法/API 和 manifest fixture 已验证，Homepage 完整打包及本地静态升级已通过。其余产品构建、服务包外运行和真实服务器升级仍未验收。纯静态、桌面和文档单元不应为填表而增加空服务 hook。
+表中“package API / manifest”分别表示源码中的 `scripts/package-api.json` 声明和构建输出的 `release-manifest.json`。前者是一份每仓库一份、发布前读取的 v1 CLI 契约；后者是一份每次构建一份、记录真实制品的版本清单。所有仓库的 package API 与包脚本已迁移到统一参数；脚本语法/API 和 manifest fixture 已验证，Homepage、Billing 的完整打包及本地静态升级已通过。其他产品构建、服务包外运行和真实服务器升级仍未验收。纯静态、桌面和文档单元不应为填表而增加空服务 hook。
 
 ## 每项目必须完成的通用迁移项
 
@@ -34,7 +34,7 @@
 ## 跨项目共性
 
 - 11 个仓库现在都有仓库级 `scripts/package.sh` 和 package API；`compile_packages.sh` 可从独立 `package_modules.conf` 接收与升级名单不同的仓库清单，并校验/上传多 artifact 和 static-only manifest。该配置文件需在发布节点从模板创建。
-- 8 个旧服务包脚本已迁移到新 API；node、router、chat、project、orchestrator 的 smoke 入口和 knowledge、orchestrator 的 health check 会进入服务包。生产构建及运行环境验收仍未执行。静态单元不要求服务型 `starter.sh`。
+- 8 个旧服务包脚本已迁移到新 API；node、router、chat、project、orchestrator 的 smoke 入口和 knowledge、orchestrator 的 health check 会进入服务包。Homepage 静态包和 Billing Go 服务包已完成干净构建；其他产品的生产构建、服务运行环境和服务器升级验收仍未执行。静态单元不要求服务型 `starter.sh`。
 - 统一升级清单当前仅含 chat、node、project、router、social、warehouse、billing；knowledge 和 orchestrator 尚未接入。静态资源与桌面产物不能直接塞入当前服务升级清单。
 - 统一升级器的服务单元选择仍使用 legacy 包名，尚未按 manifest 选择服务 artifact；static 单元已有独立处理器，可从 `static-units.conf` 读取站点、消费 manifest、校验 SHA-256 和归档、原子切换 `current`，并在 HTTP 检查失败时恢复旧指向。Homepage 已完成本机版本切换和回滚演练；Homepage、Books 和 warehouse 的真实站点部署仍待 vhost 迁移与环境演练；desktop 暂无服务器部署处理器。
 - chat 的 export/desktop/app-release、project 的 Electron、social 的 uniapp 和 knowledge/orchestrator 的运行时边界仍需独立发布决策，不能由当前单一服务包契约代替。
