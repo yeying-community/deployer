@@ -47,6 +47,18 @@ cleanup() {
 }
 trap cleanup EXIT HUP INT TERM
 
+replace_symlink_atomically() {
+  local candidate=$1 destination=$2
+  # GNU mv needs -T when destination is a symlink to a directory; BSD mv uses
+  # -h for the same purpose. Without these flags, mv may place the new link
+  # inside the old release and leave current unchanged.
+  if mv --version >/dev/null 2>&1; then
+    mv -Tf "$candidate" "$destination"
+  else
+    mv -fh "$candidate" "$destination"
+  fi
+}
+
 tar -tzf "$archive" > "$archive_list" || { echo 'unable to read static archive' >&2; exit 1; }
 [[ -s "$archive_list" ]] || { echo 'static archive is empty' >&2; exit 1; }
 while IFS= read -r member || [[ -n "$member" ]]; do
@@ -96,14 +108,24 @@ fi
 
 next_link="$site_root/.current.$$"
 ln -s "releases/$package_root" "$next_link"
-mv -f "$next_link" "$site_root/current"
+replace_symlink_atomically "$next_link" "$site_root/current"
 next_link=''
+[[ "$(readlink "$site_root/current")" == "releases/$package_root" ]] || {
+  echo "current did not switch to $package_root" >&2
+  exit 1
+}
 if ! curl --fail --silent --show-error --max-time "${STATIC_HEALTH_TIMEOUT_SECONDS:-15}" "${health_base_url%/}${health_path}" >/dev/null; then
   echo "HTTP health check failed after activating $package_root" >&2
   if [[ -n "$current_target" ]]; then
     rollback_link="$site_root/.current.rollback.$$"
     ln -s "$current_target" "$rollback_link"
-    mv -f "$rollback_link" "$site_root/current"
+    next_link="$rollback_link"
+    replace_symlink_atomically "$next_link" "$site_root/current"
+    next_link=''
+    [[ "$(readlink "$site_root/current")" == "$current_target" ]] || {
+      echo "failed to restore current to $current_target" >&2
+      exit 1
+    }
   else
     rm -f "$site_root/current"
   fi
