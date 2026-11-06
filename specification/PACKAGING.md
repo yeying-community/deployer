@@ -218,7 +218,7 @@ cd /path/to/deployer/operator/upgrade
 ./compile_packages.sh --publish
 ```
 
-发布前，`package-modules.conf` 列出的每个仓库必须位于干净的 `main`。构建器逐仓 fetch `origin/main` 并同步；遇到脏工作区或不受支持的本地分叉时停止，不会清理用户数据。为恢复旧版打包失败留下的状态，只有当本地 `main` 恰好指向一个已打 tag、其唯一父提交是 `origin/main`、且该提交只改动配置声明的版本文件时，脚本才用 `git reset --keep origin/main` 复位本地分支；原版本提交继续由 tag 保留。同步后构建器检查 `scripts/package-api.json`，为选定 commit 创建 detached worktree 和空临时输出目录，再调用：
+发布前，`package-modules.conf` 列出的每个仓库必须位于干净的 `main`。构建器逐仓 fetch `origin/main` 并同步；遇到脏工作区或不受支持的本地分叉时停止，不会清理用户数据。为恢复旧版打包失败留下的状态，只有当本地 `main` 恰好指向一个已打 tag、其唯一父提交属于当前 `origin/main` 历史、且该提交只改动配置声明的版本文件时，脚本才用 `git reset --keep origin/main` 复位本地分支；原版本提交继续由 tag 保留。此条件也适用于旧 release commit 的父提交之后因 PR 合并而继续前进的情况。同步后构建器检查 `scripts/package-api.json`，为选定 commit 创建 detached worktree 和空临时输出目录，再调用：
 
 ```bash
 bash scripts/package.sh \

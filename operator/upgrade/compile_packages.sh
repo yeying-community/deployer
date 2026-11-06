@@ -511,7 +511,8 @@ recover_tag_only_commit() {
         fi
     done < <(git -C "$module_dir" tag --list 'v[0-9]*.[0-9]*.[0-9]*')
     release_parent=$(git -C "$module_dir" rev-parse "${current_commit}^" 2>/dev/null || true)
-    [[ -n "$release_tag" && "$release_parent" == "$remote_commit" ]] || return 1
+    [[ -n "$release_tag" && -n "$release_parent" ]] || return 1
+    git -C "$module_dir" merge-base --is-ancestor "$release_parent" "$remote_commit" || return 1
 
     allowed_paths=" scripts/artifact-versions.conf "
     if [[ -f "${module_dir}/scripts/version-files.conf" ]]; then
@@ -528,7 +529,7 @@ recover_tag_only_commit() {
     done < <(git -C "$module_dir" diff-tree --no-commit-id --name-only -r "$current_commit")
     [[ "$release_changes_safe" -eq 1 ]] || return 1
 
-    log "recover ${module_name}: local main is a tagged version-only commit (${release_tag}); restore clean main to origin/main while preserving the tag"
+    log "recover ${module_name}: local main is a tagged version-only commit (${release_tag}) based on origin/main history; restore clean main to origin/main while preserving the tag"
     git -C "$module_dir" reset --keep refs/remotes/origin/main >> "$LOGFILE" 2>&1 || return 1
     return 0
 }
