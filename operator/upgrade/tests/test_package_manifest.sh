@@ -58,6 +58,29 @@ fixture=$(make_fixture homepage-yeying static valid-static)
 "$validator" "$fixture/release-manifest.json" >/dev/null || fail 'valid static manifest'
 pass 'valid static artifact and health entry'
 
+mixed_root="homepage-docs-v2.0.0-0123456"
+mkdir -p "$fixture/staging/$mixed_root"
+printf '<html>docs</html>\n' > "$fixture/staging/$mixed_root/index.html"
+tar -czf "$fixture/$mixed_root.tar.gz" -C "$fixture/staging" "$mixed_root"
+mixed_digest=$(sha256_file "$fixture/$mixed_root.tar.gz")
+jq --arg root "$mixed_root" --arg package "$mixed_root.tar.gz" --arg sha "$mixed_digest" \
+    '.artifacts += [{unit_id:"homepage-docs",type:"static",version:"2.0.0",package:$package,sha256:$sha,package_root:$root,static_targets:[{site_id:"homepage-docs",path:"/opt/deploy/static/homepage-docs",health_check_path:"/index.html"}]}]' \
+    "$fixture/release-manifest.json" > "$fixture/mixed-versions.json"
+"$validator" "$fixture/mixed-versions.json" --repository homepage --source-commit "$commit" >/dev/null || fail 'mixed artifact versions'
+if "$validator" "$fixture/mixed-versions.json" --version "$version" >/dev/null 2>&1; then fail 'single-version constraint ignored'; fi
+pass 'mixed artifact versions accepted and optional single-version constraint enforced'
+
+desktop_root="wallet-v1.2.3-0123456"
+mkdir -p "$fixture/desktop/$desktop_root"
+printf '{"manifest_version":3}\n' > "$fixture/desktop/$desktop_root/manifest.json"
+(cd "$fixture/desktop" && zip -qry "$fixture/wallet-v1.2.3-0123456.zip" "$desktop_root")
+desktop_digest=$(sha256_file "$fixture/wallet-v1.2.3-0123456.zip")
+jq -n --arg commit "$commit" --arg root "$desktop_root" --arg package "$desktop_root.zip" --arg sha "$desktop_digest" \
+    '{schema_version:1,repository:"wallet",source_commit:$commit,artifacts:[{unit_id:"wallet",type:"desktop",version:"1.2.3",package:$package,sha256:$sha,package_root:$root}]}' \
+    > "$fixture/desktop-manifest.json"
+"$validator" "$fixture/desktop-manifest.json" --repository wallet --source-commit "$commit" >/dev/null || fail 'valid desktop ZIP artifact'
+pass 'valid desktop ZIP artifact'
+
 if "$validator" "$fixture/release-manifest.json" --source-commit ffffffffffffffffffffffffffffffffffffffff >/dev/null 2>&1; then fail 'source commit mismatch accepted'; fi
 if "$validator" "$fixture/release-manifest.json" --version 9.9.9 >/dev/null 2>&1; then fail 'version mismatch accepted'; fi
 pass 'expected commit and version mismatches rejected'

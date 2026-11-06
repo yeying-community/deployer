@@ -19,3 +19,6 @@ __pycache__
 # YeYing Project local task state
 /.project/
 .playwright-cli
+
+# npm resolves dependencies during local/package builds; do not track generated locks.
+package-lock.json

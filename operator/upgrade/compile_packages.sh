@@ -5,10 +5,31 @@ if [[ $# -eq 0 ]]; then
     printf '%s\n' "automatic package build is disabled; pass --publish for an approved release"
     exit 0
 fi
-if [[ $# -ne 1 || "$1" != "--publish" ]]; then
-    printf '%s\n' "Usage: $0 --publish" >&2
-    exit 2
-fi
+release_bump="patch"
+publish_requested=0
+release_unit_versions=()
+release_tags=()
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --publish) publish_requested=1; shift ;;
+        --bump)
+            [[ $# -ge 2 ]] || { printf '%s\n' "--bump requires patch, minor, or major" >&2; exit 2; }
+            release_bump="$2"; shift 2 ;;
+        --unit-version)
+            [[ $# -ge 2 ]] || { printf '%s\n' "--unit-version requires REPOSITORY:UNIT=VERSION" >&2; exit 2; }
+            [[ "$2" =~ ^[a-z0-9]+(-[a-z0-9]+)*:[a-z0-9]+(-[a-z0-9]+)*=(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || { printf 'Invalid --unit-version value: %s\n' "$2" >&2; exit 2; }
+            release_unit_versions+=("$2"); shift 2 ;;
+        --tag)
+            [[ $# -ge 2 ]] || { printf '%s\n' "--tag requires REPOSITORY:vMAJOR.MINOR.PATCH" >&2; exit 2; }
+            [[ "$2" =~ ^[a-z0-9]+(-[a-z0-9]+)*:v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || { printf 'Invalid --tag value: %s\n' "$2" >&2; exit 2; }
+            release_tags+=("$2"); shift 2 ;;
+        --help|-h)
+            printf 'Usage: %s --publish [--bump patch|minor|major] [--tag REPOSITORY:vVERSION] [--unit-version REPOSITORY:UNIT=VERSION ...]\n' "$0"; exit 0 ;;
+    *) printf 'Unknown option: %s\nUsage: %s --publish [--bump patch|minor|major] [--tag REPOSITORY:vVERSION] [--unit-version REPOSITORY:UNIT=VERSION ...]\n' "$1" "$0" >&2; exit 2 ;;
+    esac
+done
+[[ "$publish_requested" -eq 1 ]] || { printf '%s\n' 'Usage: compile_packages.sh --publish [--bump patch|minor|major] [--unit-version REPOSITORY:UNIT=VERSION ...]' >&2; exit 2; }
+[[ "$release_bump" == patch || "$release_bump" == minor || "$release_bump" == major ]] || { printf 'Invalid bump type: %s (expected patch, minor, or major)\n' "$release_bump" >&2; exit 2; }
 
 set -euo pipefail
 shopt -s nullglob
@@ -169,7 +190,7 @@ ensure_release_notes_codex() {
 }
 
 usage() {
-    log "Usage: $0 --publish"
+    log "Usage: $0 --publish [--bump patch|minor|major] [--tag REPOSITORY:vVERSION] [--unit-version REPOSITORY:UNIT=VERSION ...]"
     log "Without --publish, automatic package build and upload are disabled."
     log "With --publish, read repositories from ${package_config_file}, then build, validate, and upload their artifacts."
 }
@@ -461,12 +482,22 @@ load_modules "$package_config_file" || {
     usage
     exit 1
 }
-
-release_version="${RELEASE_VERSION:-}"
-if [[ ! "$release_version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
-    log "ERROR! set RELEASE_VERSION to a semantic version such as 1.2.3 for an explicit release"
-    exit 1
-fi
+for unit_override in "${release_unit_versions[@]}"; do
+    override_repo="${unit_override%%:*}"
+    configured=0
+    for configured_module in "${MODULES[@]}"; do
+        [[ "$configured_module" == "$override_repo" ]] && configured=1
+    done
+    [[ "$configured" -eq 1 ]] || { log "ERROR! --unit-version repository is not listed in package-modules.conf: ${override_repo}"; exit 2; }
+done
+for tag_override in "${release_tags[@]}"; do
+    override_repo="${tag_override%%:*}"
+    configured=0
+    for configured_module in "${MODULES[@]}"; do
+        [[ "$configured_module" == "$override_repo" ]] && configured=1
+    done
+    [[ "$configured" -eq 1 ]] || { log "ERROR! --tag repository is not listed in package-modules.conf: ${override_repo}"; exit 2; }
+done
 
 sync_main_latest() {
     local module_name=$1
@@ -593,16 +624,8 @@ for module_name in "${MODULES[@]}"; do
         continue
     fi
 
-    latest_commit=$(git -C "$module_dir" rev-parse HEAD)
-    build_reason="explicit --publish release"
-
     if [[ ! -f "$package_script" ]]; then
         log "ERROR! package script is missing: ${package_script}"
-        notify_build_failure \
-            "$module_name" \
-            "构建脚本缺失：${package_script}" \
-            "模块仓库缺少 scripts/package.sh，无法启动构建流程" \
-            "补齐构建脚本后重新执行打包"
         overall_status=1
         continue
     fi
@@ -619,10 +642,51 @@ for module_name in "${MODULES[@]}"; do
         .manifest == "release-manifest.json"
     ' "$package_api_file" >/dev/null 2>&1; then
         log "ERROR! package script has not declared the safe release API: ${package_api_file}"
-        log "ERROR! refusing to run a legacy script that may mutate Git refs, workspace files, or output contents"
         overall_status=1
         continue
     fi
+
+    selected_tag=""
+    for tag_override in "${release_tags[@]}"; do
+        [[ "${tag_override%%:*}" == "$module_name" ]] && selected_tag="${tag_override#*:}"
+    done
+    if [[ -n "$selected_tag" ]]; then
+        if ! git -C "$module_dir" fetch origin "refs/tags/${selected_tag}:refs/tags/${selected_tag}" >> "$LOGFILE" 2>&1; then
+            log "ERROR! requested release tag does not exist on origin: ${selected_tag}"
+            overall_status=1
+            continue
+        fi
+        latest_tag="$selected_tag"
+        latest_commit=$(git -C "$module_dir" rev-parse "${selected_tag}^{commit}")
+        build_reason="rebuild existing tag ${selected_tag}"
+    else
+        tag_args=(--bump "$release_bump")
+        for unit_override in "${release_unit_versions[@]}"; do
+            override_repo="${unit_override%%:*}"
+            override_spec="${unit_override#*:}"
+            if [[ "$override_repo" == "$module_name" ]]; then tag_args+=(--unit-version "$override_spec"); fi
+        done
+        log "create release tag for ${module_name} using ${release_bump} bump"
+        if ! (cd "$module_dir" && bash scripts/tag.sh "${tag_args[@]}" >> "$LOGFILE" 2>&1); then
+            log "ERROR! release tag creation failed for ${module_name}"
+            overall_status=1
+            continue
+        fi
+        if ! git -C "$module_dir" fetch origin main --tags >> "$LOGFILE" 2>&1; then
+            log "ERROR! failed to fetch newly-created release tag for ${module_name}"
+            overall_status=1
+            continue
+        fi
+        latest_tag=$(git -C "$module_dir" describe --tags --exact-match refs/remotes/origin/main 2>/dev/null || true)
+        latest_commit=$(git -C "$module_dir" rev-parse refs/remotes/origin/main)
+        build_reason="release tag ${latest_tag}"
+    fi
+    if [[ ! "$latest_tag" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+        log "ERROR! selected release tag is invalid for ${module_name}: ${latest_tag:-none}"
+        overall_status=1
+        continue
+    fi
+    release_version="${latest_tag#v}"
 
     active_build_repo="$module_dir"
     active_build_workspace=$(mktemp -d "${TMPDIR:-/tmp}/compile-packages-${module_name}.XXXXXX")
@@ -672,7 +736,7 @@ for module_name in "${MODULES[@]}"; do
     fi
 
     if ! "$manifest_validator" "$manifest_file" \
-        --repository "$module_name" --source-commit "$latest_commit" --version "$release_version" >> "$LOGFILE" 2>&1; then
+        --repository "$module_name" --source-commit "$latest_commit" >> "$LOGFILE" 2>&1; then
         log "ERROR! invalid release manifest for ${module_name}: ${manifest_file}"
         notify_build_failure \
             "$module_name" \
@@ -684,7 +748,7 @@ for module_name in "${MODULES[@]}"; do
     fi
 
     artifact_index="${active_build_workspace}/artifacts.tsv"
-    if ! "$manifest_validator" "$manifest_file" --version "$release_version" --artifacts-tsv > "$artifact_index"; then
+    if ! "$manifest_validator" "$manifest_file" --artifacts-tsv > "$artifact_index"; then
         log "ERROR! unable to read validated artifact list for ${module_name}"
         overall_status=1
         continue
