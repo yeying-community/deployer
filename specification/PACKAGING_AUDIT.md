@@ -2,11 +2,11 @@
 
 本审计对应统一的[社区项目打包规范](./PACKAGING.md)。基线来自 2026-11-04 对 11 个仓库的文件静态检查，本轮另将独立 Wallet 扩展仓库纳入，目标覆盖 12 个仓库。为 Wallet 新增 v1 安全 package API 和 tag/version 配置；8 个旧服务包脚本已改为显式 `--ref`、`--version`、`--output-dir` 并生成 manifest。Homepage 的完整静态打包和 Billing 的 Go service 打包均已在干净 detached worktree 中通过；静态安装、版本切换、HTTP 检查和失败回滚已在本机临时部署目录中执行。其余产品完整构建、真实服务器升级和外部定时任务仍未验收。`scripts/upgrade.sh` 表示存在项目级 hook，不等于已经完成统一升级验收。
 
-本轮发布流程调整中：每个项目新增 `scripts/tag.sh`，由显式打包操作自动递增 patch/minor/major、同步 `version-files.conf` 中的项目 JSON 版本、按需提交 artifact 版本覆盖、创建并推送社区 main/tag。编译器随后按 tag commit 构建。支持 `--unit-version` 设置不同 artifact 版本、`--tag` 重建已有版本。该实现尚待社区仓库 PR 合并和打包机实际执行验收；操作规则见 [PACKAGING.md 的 Git tag 说明](./PACKAGING.md#git-tag-何时创建)。
+本轮发布流程调整中：每个项目的 `scripts/tag.sh` 在隔离 worktree 中递增 patch/minor/major、同步版本 JSON 和 artifact 版本覆盖，创建只属于 tag 的 release commit 并只推送 tag。编译器从 tag commit 构建，制品名和 manifest 则记录 tag 的 main source commit。支持 `--unit-version` 设置不同 artifact 版本、`--tag` 重建已有版本。该实现尚待社区仓库 PR 合并和打包机实际执行验收；操作规则见 [PACKAGING.md 的 Git tag 说明](./PACKAGING.md#git-tag-何时创建)。
 
 这里的“安全 package API”是 `scripts/package.sh` 的命令行契约，不是 HTTP API。`scripts/package-api.json` 是每个源码仓库的调用方式/副作用声明，供发布器执行前做 fail-closed 检查；它不同于每次构建输出的 `release-manifest.json`，后者记录本次实际产物。该 JSON 不是沙箱或安全证明，必须与 detached worktree、临时输出目录、发布器校验和代码审查配合使用。完整四种制品的打包、部署和升级示例见 [PACKAGING.md 的完整流程示例](./PACKAGING.md#打包部署和升级完整流程)。
 
-对 node、warehouse、router、chat、homepage、project、social、knowledge、orchestrator、books、billing、wallet 的 12 份文件做了逐项比较，当前内容完全相同：都声明 v1、三个公共参数、不由 `package.sh` 创建或推送 Git ref、使用隔离 checkout，并输出 `release-manifest.json`。仍将文件放在各仓库，是为了让该仓库明确 opt in，并使声明与对应 `package.sh` 一起随 commit 评审；发布器可在运行项目代码前检查目标仓库版本是否符合契约。它不是存项目构建差异的配置文件；构建技术栈和制品类型的差异放在 `package.sh` 与每次构建的 manifest 中。未来新增字段必须同步更新规范、发布器校验及调用行为；当前未识别的字段不会自动生效。字段逐项解释和新项目复制模板、验证声明的操作步骤见 [PACKAGING.md 的 package-api.json 说明](./PACKAGING.md#package-apijson-字段逐项说明)。
+对 node、warehouse、router、chat、homepage、project、social、knowledge、orchestrator、books、billing、wallet 的 12 份文件做了逐项比较，当前内容完全相同：都声明 v1、四个公共参数、不由 `package.sh` 创建或推送 Git ref、使用隔离 checkout，并输出 `release-manifest.json`。仍将文件放在各仓库，是为了让该仓库明确 opt in，并使声明与对应 `package.sh` 一起随 commit 评审；发布器可在运行项目代码前检查目标仓库版本是否符合契约。它不是存项目构建差异的配置文件；构建技术栈和制品类型的差异放在 `package.sh` 与每次构建的 manifest 中。未来新增字段必须同步更新规范、发布器校验及调用行为；当前未识别的字段不会自动生效。字段逐项解释和新项目复制模板、验证声明的操作步骤见 [PACKAGING.md 的 package-api.json 说明](./PACKAGING.md#package-apijson-字段逐项说明)。
 
 | 项目 | 当前交付单元 | `package.sh` | package API / manifest | starter / health / smoke | upgrade hook | 必须补齐或确认的项目缺口 |
 | --- | --- | --- | --- | --- | --- | --- |

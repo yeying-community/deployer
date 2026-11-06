@@ -69,13 +69,13 @@ cd /root/code/deployer/operator/upgrade
 ./compile_packages.sh --publish
 ```
 
-默认对每个仓库的最大语义版本递增 patch。需要递增 minor 或 major 时执行
+默认对每个仓库的最大语义版本递增 patch。版本文件变更只存在于 tag 指向的 release commit，不推送到社区 `main`；tag 的父提交是打包时最新的 `main` commit，制品名和 manifest 使用该 `main` commit 的短哈希。需要递增 minor 或 major 时执行
 `./compile_packages.sh --publish --bump minor` 或 `--bump major`。单个仓库内某个制品需要独立版本时，可以在命令中传入
 `--unit-version REPOSITORY:UNIT=VERSION`，例如 `--unit-version homepage:homepage-wallet=2.1.0`；也可以把长期版本覆盖提交到该仓库的 `scripts/artifact-versions.conf`。
-发布中断后如需重建已有 tag，可传入 `--tag 仓库:v版本`，例如 `--tag router:v0.0.163`；该仓库将按该 tag 的 commit 重建，不会再递增版本。
+tag 创建后若构建或上传失败，保留该 tag；重试时使用 `--tag` 重建同一版本，不要默认再次递增。发布中断后如需重建已有 tag，可传入 `--tag 仓库:v版本`，例如 `--tag router:v0.0.163`；该仓库将按该 tag 的 commit 重建，不会再递增版本。
 
-发布前仓库必须是干净的 `main`。脚本会 fetch `origin/main`，并仅在可安全快进时自动同步；存在未提交改动、本地独有提交或分叉时会停止，不会用
-`git reset --hard` 或 `git clean -fd` 清理工作区。模块仓库必须提供 `scripts/package.sh` 和
+发布前仓库必须是干净的 `main`。脚本会 fetch `origin/main`，并仅在可安全快进时自动同步；存在未提交改动或无法安全识别的本地独有提交/分叉时会停止，不会用
+`git reset --hard` 或 `git clean -fd` 清理工作区。仅当本地分支停在旧版流程创建并打 tag 的单个版本提交上，且该提交只改动版本配置、父提交正好是 `origin/main` 时，脚本会用 `git reset --keep origin/main` 恢复工作分支；tag 会保留该版本提交，供 `--tag` 重建。模块仓库必须提供 `scripts/package.sh` 和
 声明标准参数/无 Git 写入能力的 `scripts/package-api.json`。构建在临时 detached worktree 和空输出目录中运行，
 输出目录不会写入模块仓库。manifest 可以包含一个或多个服务、静态、桌面 artifact；当前 `upgrade.sh` 仍只升级 `upgrade-modules.conf` 中配置且包名前缀匹配的 legacy 服务单元。已填入 `static-units.conf` 的静态 artifact 会经 manifest 校验和独立静态处理器部署；未配置的静态单元与所有 desktop artifact 只会被校验和上传。服务单元包名为：
 

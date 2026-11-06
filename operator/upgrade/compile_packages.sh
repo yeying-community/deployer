@@ -499,6 +499,40 @@ for tag_override in "${release_tags[@]}"; do
     [[ "$configured" -eq 1 ]] || { log "ERROR! --tag repository is not listed in package-modules.conf: ${override_repo}"; exit 2; }
 done
 
+recover_tag_only_commit() {
+    local module_name=$1 module_dir=$2 current_commit=$3 remote_commit=$4
+    local candidate_tag release_tag="" release_parent allowed_paths version_file changed_path release_changes_safe=1
+
+    while IFS= read -r candidate_tag; do
+        [[ "$candidate_tag" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || continue
+        if [[ "$(git -C "$module_dir" rev-parse "${candidate_tag}^{commit}" 2>/dev/null || true)" == "$current_commit" ]]; then
+            release_tag="$candidate_tag"
+            break
+        fi
+    done < <(git -C "$module_dir" tag --list 'v[0-9]*.[0-9]*.[0-9]*')
+    release_parent=$(git -C "$module_dir" rev-parse "${current_commit}^" 2>/dev/null || true)
+    [[ -n "$release_tag" && "$release_parent" == "$remote_commit" ]] || return 1
+
+    allowed_paths=" scripts/artifact-versions.conf "
+    if [[ -f "${module_dir}/scripts/version-files.conf" ]]; then
+        while IFS= read -r version_file || [[ -n "$version_file" ]]; do
+            [[ -z "$version_file" || "$version_file" == \#* ]] && continue
+            allowed_paths+=" ${version_file} "
+        done < "${module_dir}/scripts/version-files.conf"
+    fi
+    while IFS= read -r changed_path; do
+        case "$allowed_paths" in
+            *" ${changed_path} "*) ;;
+            *) release_changes_safe=0; break ;;
+        esac
+    done < <(git -C "$module_dir" diff-tree --no-commit-id --name-only -r "$current_commit")
+    [[ "$release_changes_safe" -eq 1 ]] || return 1
+
+    log "recover ${module_name}: local main is a tagged version-only commit (${release_tag}); restore clean main to origin/main while preserving the tag"
+    git -C "$module_dir" reset --keep refs/remotes/origin/main >> "$LOGFILE" 2>&1 || return 1
+    return 0
+}
+
 sync_main_latest() {
     local module_name=$1
     local module_dir=$2
@@ -515,28 +549,32 @@ sync_main_latest() {
         return 1
     fi
 
-    if ! git -C "$module_dir" fetch origin main >> "$LOGFILE" 2>&1; then
+    if ! git -C "$module_dir" fetch origin main --tags >> "$LOGFILE" 2>&1; then
         log "ERROR! git fetch origin main failed for ${module_name}"
         return 1
     fi
 
-    # Keep the persistent checkout useful for operators while only allowing a
-    # safe fast-forward. Local commits or divergence make merge --ff-only fail;
-    # dirty worktrees were rejected above. Never reset or clean user data.
     log "sync ${module_name}: fast-forward main to origin/main when needed"
     if ! git -C "$module_dir" merge --ff-only refs/remotes/origin/main >> "$LOGFILE" 2>&1; then
-        log "ERROR! refusing to build ${module_name}: main cannot fast-forward to origin/main; inspect local commits and branch history"
-        return 1
+        current_commit=$(git -C "$module_dir" rev-parse HEAD)
+        remote_commit=$(git -C "$module_dir" rev-parse refs/remotes/origin/main)
+        if ! recover_tag_only_commit "$module_name" "$module_dir" "$current_commit" "$remote_commit"; then
+            log "ERROR! refusing to build ${module_name}: main cannot fast-forward to origin/main; inspect local commits and branch history"
+            return 1
+        fi
     fi
     log "sync ${module_name}: main is aligned with origin/main"
 
     current_commit=$(git -C "$module_dir" rev-parse HEAD) || return 1
     remote_commit=$(git -C "$module_dir" rev-parse refs/remotes/origin/main) || return 1
     if [[ "$current_commit" != "$remote_commit" ]]; then
-        log "ERROR! refusing to build ${module_name}: main does not match origin/main after fast-forward"
-        return 1
+        if ! recover_tag_only_commit "$module_name" "$module_dir" "$current_commit" "$remote_commit"; then
+            log "ERROR! refusing to build ${module_name}: main does not match origin/main after fast-forward"
+            return 1
+        fi
+        current_commit=$(git -C "$module_dir" rev-parse HEAD) || return 1
+        [[ "$current_commit" == "$remote_commit" ]] || return 1
     fi
-
     return 0
 }
 
@@ -635,7 +673,7 @@ for module_name in "${MODULES[@]}"; do
         type == "object" and
         .api_version == 1 and
         (.supports | type == "array" and all(.[]; type == "string") and
-            (["--ref", "--version", "--output-dir"] - . == [])) and
+            (["--ref", "--source-commit", "--version", "--output-dir"] - . == [])) and
         .creates_git_tags == false and
         .pushes_git_refs == false and
         .builds_in_isolated_checkout == true and
@@ -658,6 +696,11 @@ for module_name in "${MODULES[@]}"; do
         fi
         latest_tag="$selected_tag"
         latest_commit=$(git -C "$module_dir" rev-parse "${selected_tag}^{commit}")
+        source_commit=$(git -C "$module_dir" for-each-ref --format='%(contents:body)' "refs/tags/${selected_tag}" | sed -n 's/^Source-Commit: //p' | head -n 1)
+        if [[ -z "$source_commit" ]]; then
+            # Legacy release tags point to a version-only commit whose parent is main.
+            source_commit=$(git -C "$module_dir" rev-parse "${latest_commit}^" 2>/dev/null || true)
+        fi
         build_reason="rebuild existing tag ${selected_tag}"
     else
         tag_args=(--bump "$release_bump")
@@ -667,19 +710,27 @@ for module_name in "${MODULES[@]}"; do
             if [[ "$override_repo" == "$module_name" ]]; then tag_args+=(--unit-version "$override_spec"); fi
         done
         log "create release tag for ${module_name} using ${release_bump} bump"
-        if ! (cd "$module_dir" && bash scripts/tag.sh "${tag_args[@]}" >> "$LOGFILE" 2>&1); then
+        if ! tag_output=$(cd "$module_dir" && bash scripts/tag.sh "${tag_args[@]}" 2>&1); then
+            printf '%s\n' "$tag_output" >> "$LOGFILE"
             log "ERROR! release tag creation failed for ${module_name}"
             overall_status=1
             continue
         fi
-        if ! git -C "$module_dir" fetch origin main --tags >> "$LOGFILE" 2>&1; then
-            log "ERROR! failed to fetch newly-created release tag for ${module_name}"
+        printf '%s\n' "$tag_output" >> "$LOGFILE"
+        latest_tag=$(printf '%s\n' "$tag_output" | sed -n 's/^TAG=\([^ ]*\).*/\1/p' | tail -n 1)
+        source_commit=$(printf '%s\n' "$tag_output" | sed -n 's/.*SOURCE_COMMIT=\([^ ]*\).*/\1/p' | tail -n 1)
+        if ! git -C "$module_dir" fetch origin "refs/tags/${latest_tag}:refs/tags/${latest_tag}" >> "$LOGFILE" 2>&1; then
+            log "ERROR! failed to fetch newly-created release tag ${latest_tag} for ${module_name}"
             overall_status=1
             continue
         fi
-        latest_tag=$(git -C "$module_dir" describe --tags --exact-match refs/remotes/origin/main 2>/dev/null || true)
-        latest_commit=$(git -C "$module_dir" rev-parse refs/remotes/origin/main)
-        build_reason="release tag ${latest_tag}"
+        latest_commit=$(git -C "$module_dir" rev-parse "${latest_tag}^{commit}")
+        build_reason="tag ${latest_tag} from main ${source_commit:0:7}"
+    fi
+    if [[ -z "$source_commit" ]] || ! git -C "$module_dir" merge-base --is-ancestor "$source_commit" "$latest_commit" || ! git -C "$module_dir" merge-base --is-ancestor "$source_commit" refs/remotes/origin/main; then
+        log "ERROR! release tag ${latest_tag} is not based on a commit in origin/main"
+        overall_status=1
+        continue
     fi
     if [[ ! "$latest_tag" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
         log "ERROR! selected release tag is invalid for ${module_name}: ${latest_tag:-none}"
@@ -702,7 +753,7 @@ for module_name in "${MODULES[@]}"; do
     log "build package for ${module_name}: ${build_reason}"
     package_log="$(mktemp)"
     if ! (cd "$build_checkout" && bash scripts/package.sh \
-        --ref "$latest_commit" --version "$release_version" --output-dir "$build_output" \
+        --ref "$latest_commit" --source-commit "$source_commit" --version "$release_version" --output-dir "$build_output" \
         200>&- > "$package_log" 2>&1); then
         log "ERROR! package script failed for ${module_name}; output:"
         sed -n '1,160p' "$package_log" | tee -a "$LOGFILE"
@@ -736,7 +787,7 @@ for module_name in "${MODULES[@]}"; do
     fi
 
     if ! "$manifest_validator" "$manifest_file" \
-        --repository "$module_name" --source-commit "$latest_commit" >> "$LOGFILE" 2>&1; then
+        --repository "$module_name" --source-commit "$source_commit" >> "$LOGFILE" 2>&1; then
         log "ERROR! invalid release manifest for ${module_name}: ${manifest_file}"
         notify_build_failure \
             "$module_name" \

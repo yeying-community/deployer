@@ -47,7 +47,7 @@ operator/upgrade/compile_packages.sh --publish [--bump patch|minor|major]
 构建器再以选定的 commit 调用项目脚本：
 
 ```bash
-scripts/package.sh --ref <commit-sha> --version <major.minor.patch> --output-dir <directory>
+scripts/package.sh --ref <tag-commit-sha> --source-commit <main-commit-sha> --version <major.minor.patch> --output-dir <directory>
 ```
 
 为防止旧脚本被误调用，项目还必须提供 `scripts/package-api.json`，声明兼容的 API 和无副作用能力：
@@ -55,7 +55,7 @@ scripts/package.sh --ref <commit-sha> --version <major.minor.patch> --output-dir
 ```json
 {
   "api_version": 1,
-  "supports": ["--ref", "--version", "--output-dir"],
+  "supports": ["--ref", "--source-commit", "--version", "--output-dir"],
   "creates_git_tags": false,
   "pushes_git_refs": false,
   "builds_in_isolated_checkout": true,
@@ -72,19 +72,19 @@ scripts/package.sh --ref <commit-sha> --version <major.minor.patch> --output-dir
 | 字段 | 类型与当前约束 | 具体含义及发布器行为 |
 | --- | --- | --- |
 | `api_version` | JSON 数值，当前必须等于 `1` | 打包脚本命令行契约的版本，不是制品版本。发布器当前只认识 v1；缺失或写成其他值时会拒绝运行脚本。若以后要改参数兼容性，必须先定义并部署新版调用契约，再迁移项目。 |
-| `supports` | 字符串数组，必须包含 `--ref`、`--version`、`--output-dir` | 声明脚本接受的选项名。发布器逐次调用时会传入这三个公共选项；数组顺序无关。当前校验器允许列出额外字符串，但发布器不会自动使用项目私有选项；新增选项前应先更新公共契约及调用器，避免只有声明而无人传参。 |
+| `supports` | 字符串数组，必须包含 `--ref`、`--source-commit`、`--version`、`--output-dir` | 声明脚本接受的选项名。发布器逐次调用时会传入这四个公共选项；数组顺序无关。当前校验器允许列出额外字符串，但发布器不会自动使用项目私有选项；新增选项前应先更新公共契约及调用器，避免只有声明而无人传参。 |
 | `creates_git_tags` | 布尔值，必须为 `false` | 脚本不能创建 Git tag。版本由受控发布流程传入，打包脚本只负责构建制品；若声明为 `true`，发布器拒绝调用。 |
 | `pushes_git_refs` | 布尔值，必须为 `false` | 脚本不能推送分支、tag 或其他 Git ref。发布器不会允许构建步骤顺带改写远端仓库；若声明为 `true`，发布器拒绝调用。 |
 | `builds_in_isolated_checkout` | 布尔值，必须为 `true` | 声明脚本能在发布器提供的 detached worktree/隔离 checkout 中工作，不依赖开发者当前分支、未提交文件或原工作区状态。发布器负责创建隔离 checkout；这个字段是项目对兼容性的声明，不是沙箱，也不能单独证明脚本没有副作用。 |
 | `manifest` | 字符串，当前必须精确为 `release-manifest.json` | 指定 `--output-dir` 根目录下本次构建清单的固定文件名。发布器会读取并校验该清单，再校验清单列出的归档及 SHA-256；不能把仓库级 `package-api.json` 当成某次构建的制品清单。 |
 
-三个 `supports` 选项的参数含义也固定：`--ref` 是发布器选定的已提交 Git commit，脚本必须构建该 commit，不能自行 fetch 或改切调用方工作区；`--version` 是 `major.minor.patch` 格式的制品版本，不带 `v` 前缀；`--output-dir` 是发布器提供的空输出目录，脚本在其中写归档和 manifest，不能删除或清理调用者传入的目录。字段检查只确认声明符合 v1，仍需结合脚本审查和实际构建验证。
+四个 `supports` 选项的参数含义也固定：`--ref` 是 tag 对应的 release commit，脚本必须从该 commit 取源码；`--source-commit` 是 tag 所记录的社区 `main` 源码 commit，必须是 `--ref` 的祖先，用于制品命名和 manifest 溯源；脚本不能自行 fetch 或改切调用方工作区。`--version` 是 `major.minor.patch` 格式的制品版本，不带 `v` 前缀；`--output-dir` 是发布器提供的空输出目录，脚本在其中写归档和 manifest，不能删除或清理调用者传入的目录。字段检查只确认声明符合 v1，仍需结合脚本审查和实际构建验证。
 
 ### 项目如何配置
 
 新项目接入时，在仓库的 `scripts/` 下创建 `package-api.json`，复制上面的 v1 模板并保留这些固定值。当前没有按 `service`、`static`、`desktop` 或项目语言调整这些字段的情况，也不需要在文件里填仓库名、unit ID、版本号、依赖命令或部署路径；这些属于 `package.sh` 输入/实现或 `release-manifest.json` 的内容。现有 12 个项目都使用同一份 JSON。
 
-同时确认项目的 `scripts/package.sh` 实际接受并遵守声明的三个参数，通常通过共享参数解析逻辑处理。特别是 `builds_in_isolated_checkout: true` 要求脚本可以在发布器创建的 detached worktree 中运行；脚本不负责创建该 worktree，也不能假设原开发工作区、当前分支或未提交文件存在。字段是项目维护者对兼容性的承诺，只有审查实现并通过构建验证后才应保留 `true`。
+同时确认项目的 `scripts/package.sh` 实际接受并遵守声明的四个参数，通常通过共享参数解析逻辑处理。特别是 `builds_in_isolated_checkout: true` 要求脚本可以在发布器创建的 detached worktree 中运行；脚本不负责创建该 worktree，也不能假设原开发工作区、当前分支或未提交文件存在。字段是项目维护者对兼容性的承诺，只有审查实现并通过构建验证后才应保留 `true`。
 
 提交前可以用发布器同一套规则预检 JSON：
 
@@ -93,7 +93,7 @@ jq -e '
   type == "object" and
   .api_version == 1 and
   (.supports | type == "array" and all(.[]; type == "string") and
-    (["--ref", "--version", "--output-dir"] - . == [])) and
+    (["--ref", "--source-commit", "--version", "--output-dir"] - . == [])) and
   .creates_git_tags == false and
   .pushes_git_refs == false and
   .builds_in_isolated_checkout == true and
@@ -101,7 +101,7 @@ jq -e '
 ' scripts/package-api.json
 ```
 
-输出 `true` 只表示声明满足当前 v1 检查。接入验收还应从干净 checkout 选一个已提交 commit，实际运行 `scripts/package.sh --ref "$PACKAGE_REF" --version 1.2.3 --output-dir "$PACKAGE_OUTPUT"`，然后验证输出 manifest、归档与 SHA-256。不要仅为让预检通过而填写布尔值。
+输出 `true` 只表示声明满足当前 v1 检查。接入验收还应从干净 checkout 选一个已提交 commit，实际运行 `scripts/package.sh --ref "$PACKAGE_REF" --source-commit "$PACKAGE_SOURCE_COMMIT" --version 1.2.3 --output-dir "$PACKAGE_OUTPUT"`，然后验证输出 manifest、归档与 SHA-256。不要仅为让预检通过而填写布尔值。
 
 #### 后续扩展规则
 
@@ -118,11 +118,15 @@ jq -e '
 
 ### Git tag 何时创建
 
-每个社区仓库的 `scripts/tag.sh` 在实际打包时负责版本递增、更新版本映射、提交必要的版本变更并创建、推送 tag；`scripts/package.sh` 只在隔离 worktree 中构建制品。默认递增 patch，可用 `--bump minor` 或 `--bump major` 选择递增级别。脚本从所有有效 `vMAJOR.MINOR.PATCH` tag 中选最大版本，检查新版本严格递增，并拒绝无效参数、脏工作区、非 main 分支、落后的 main 或已有 tag。
+每个社区仓库的 `scripts/tag.sh` 在显式打包时计算下一个 patch/minor/major 版本，并在临时 detached worktree 中更新 `version-files.conf` 指定的版本文件，创建只用于该版本的 release commit 和 annotated tag。它只推送 tag，不推送或改写 `main`。因此版本文件用于记录 tag 对应的源码版本，不要求提交回 `main`；社区 `main` 保持日常开发状态。
 
-打包机使用社区仓库检出，运行时每个仓库先同步社区 `main`，然后由 `compile_packages.sh` 调用项目 `scripts/tag.sh`。tag 脚本将 tag 以及版本配置提交推送到社区 remote；之后编译器从该 tag 对应 commit 创建 detached worktree，并以 tag 版本构建。该动作只由显式 `--publish` 触发。不同仓库分别维护自己的 tag 序列。
+tag 的父提交是打包时已同步的社区 `main` 最新 commit。tag 信息记录 `Source-Commit`，指向该 `main` commit。编译器从 tag commit 的源码构建，以 tag 名作为制品版本，同时以 `Source-Commit` 生成包名后缀和 manifest 的 `source_commit`。例如 `main` commit 为 `abc1234`、tag 为 `v0.0.162` 时，包名为 `router-v0.0.162-abc1234.tar.gz`。tag commit 可额外包含版本文件变更，但不会改变包名中的 main commit ID。
 
-一个仓库默认所有制品使用 tag 的同一版本。若要单独设置制品版本，在 `scripts/artifact-versions.conf` 中按 `unit-id MAJOR.MINOR.PATCH` 配置；tag 脚本会把变更纳入 release commit，打包器和 manifest 按每个 unit 的版本命名。各项目通过 `scripts/version-files.conf` 列出需要同步更新 `.version` 字段的 JSON 版本文件。tag 创建后若构建失败，不能移动或覆盖该 tag；修复问题后可用 `compile_packages.sh --publish --tag 仓库:v版本` 重建原 tag，或经审批创建新版本。
+打包机只允许从干净且与社区 `origin/main` 一致的 `main` 发布；tag 的 source commit 必须是远端 `main` 的祖先。GitHub 对 `main` 的 PR、review 和 required checks 规则保持不变；发布机没有绕过分支保护的权限。仓库也应对 `v*` tag 使用受控规则，限制只有获准的发布身份可以创建 tag，并禁止移动或删除已发布 tag。
+
+一个仓库默认所有制品使用 tag 的同一版本。若要单独设置制品版本，在 `scripts/artifact-versions.conf` 中按 `unit-id MAJOR.MINOR.PATCH` 配置；tag commit 会包含该映射变更，打包器和 manifest 按每个 unit 的版本命名。各项目通过 `scripts/version-files.conf` 列出需要同步更新 `.version` 字段的 JSON 版本文件。
+
+若构建或上传失败，保留已创建的不可变 tag，使用 `compile_packages.sh --publish --tag 仓库:v版本` 重建同一 tag。显式重建时，编译器会读取 tag 中的 `Source-Commit`（旧 tag 缺少该字段时读取 tag commit 的父提交），验证其仍在社区 `main` 历史中，再按 tag 版本构建。不要再次默认递增版本来重试同一发布，也不要移动或覆盖 tag。
 
 示例：在打包节点的社区仓库检出中执行：
 
@@ -130,10 +134,11 @@ jq -e '
 cd /root/code/deployer/operator/upgrade
 ./compile_packages.sh --publish
 ./compile_packages.sh --publish --bump minor
+# 已创建 tag 的构建失败后，按同一 tag 重试：
+./compile_packages.sh --publish --tag router:v0.0.162
 ```
 
-`creates_git_tags: false` 和 `pushes_git_refs: false` 仍约束项目 `scripts/package.sh`；tag 与推送由独立的 `scripts/tag.sh` 完成。
-
+`creates_git_tags: false` 和 `pushes_git_refs: false` 仍约束项目 `scripts/package.sh`；tag 创建和推送只由独立的 `scripts/tag.sh` 完成。项目打包 API 同时接收 `--ref`（tag commit）和 `--source-commit`（main commit），分别用于构建源码与制品身份。
 ## 制品命名和清单
 
 每个可发布单元单独生成一个包，命名格式为：
@@ -206,18 +211,19 @@ manifest 的 `static_targets[].path` 固定为 `/opt/deploy/static/<site_id>`，
 
 ### 共同发布步骤
 
-选定已合并到 `main` 的 commit 和语义版本，例如 `1.2.3`。发布人或批准的 release workflow 在构建节点显式运行：
+选定已合并到 `main` 的源码 commit；编译器从该 commit 创建版本 tag commit，再按 tag 版本构建。直接调用项目打包接口时，分别传入 tag commit 与 main source commit。
 
 ```bash
 cd /path/to/deployer/operator/upgrade
 ./compile_packages.sh --publish
 ```
 
-发布前，`package-modules.conf` 列出的每个仓库必须位于干净的 `main`。构建器逐仓 fetch `origin/main`，仅在可安全快进时自动同步；遇到脏工作区、本地独有提交或分叉时停止，不会清理用户数据。同步后构建器检查 `scripts/package-api.json`，为选定 commit 创建 detached worktree 和空临时输出目录，再调用：
+发布前，`package-modules.conf` 列出的每个仓库必须位于干净的 `main`。构建器逐仓 fetch `origin/main` 并同步；遇到脏工作区或不受支持的本地分叉时停止，不会清理用户数据。为恢复旧版打包失败留下的状态，只有当本地 `main` 恰好指向一个已打 tag、其唯一父提交是 `origin/main`、且该提交只改动配置声明的版本文件时，脚本才用 `git reset --keep origin/main` 复位本地分支；原版本提交继续由 tag 保留。同步后构建器检查 `scripts/package-api.json`，为选定 commit 创建 detached worktree 和空临时输出目录，再调用：
 
 ```bash
 bash scripts/package.sh \
-  --ref <完整 commit SHA> \
+  --ref <tag commit SHA> \
+  --source-commit <main commit SHA> \
   --version 1.2.3 \
   --output-dir <空临时目录>
 ```
@@ -227,9 +233,10 @@ bash scripts/package.sh \
 例如 Homepage 仓库的一次本地打包调用形式是：
 
 ```bash
-commit="$(git rev-parse HEAD)"
+source_commit="$(git rev-parse HEAD)"
+tag_commit="$(git rev-parse v1.2.3^{commit})"
 mkdir -p output
-bash scripts/package.sh --ref "$commit" --version 1.2.3 --output-dir output
+bash scripts/package.sh --ref "$tag_commit" --source-commit "$source_commit" --version 1.2.3 --output-dir output
 ```
 
 `output/` 必须为空。它会包含多个以 `unit-id-v1.2.3-<commit>.tar.gz` 命名的 artifact，以及一个 `release-manifest.json`；发布器实际构建时使用临时输出目录，所以不会写入持久工作区。正式 release 必须从干净、已提交的 commit 构建，不能用本地未提交目录代替发布器的隔离构建。
@@ -242,7 +249,7 @@ flowchart TD
     C --> D[检查 package-modules.conf 仓库状态]
     D --> E[检查 scripts/package-api.json]
     E --> F[detached worktree + 空临时目录]
-    F --> G[调用 package.sh ref / version / output-dir]
+    F --> G[调用 package.sh tag-ref / main-source / version / output-dir]
     G --> H[生成归档和 release-manifest.json]
     H --> I[校验类型、命名、SHA-256 和归档结构]
     I --> J[上传归档和版本化 manifest]
