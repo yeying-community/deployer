@@ -1,12 +1,12 @@
 # 社区项目打包兼容性审计
 
-本审计对应统一的[社区项目打包规范](./PACKAGING.md)。基线来自 2026-11-04 对 11 个仓库的文件静态检查。本轮为 11 个仓库补齐 v1 安全 package API 声明；8 个旧服务包脚本已改为显式 `--ref`、`--version`、`--output-dir` 并生成 manifest。Homepage 的完整静态打包和 Billing 的 Go service 打包均已在干净 detached worktree 中通过；静态安装、版本切换、HTTP 检查和失败回滚已在本机临时部署目录中执行。其余产品完整构建、真实服务器升级和外部定时任务仍未验收。`scripts/upgrade.sh` 表示存在项目级 hook，不等于已经完成统一升级验收。
+本审计对应统一的[社区项目打包规范](./PACKAGING.md)。基线来自 2026-11-04 对 11 个仓库的文件静态检查，本轮另将独立 Wallet 扩展仓库纳入，目标覆盖 12 个仓库。为 Wallet 新增 v1 安全 package API 和 tag/version 配置；8 个旧服务包脚本已改为显式 `--ref`、`--version`、`--output-dir` 并生成 manifest。Homepage 的完整静态打包和 Billing 的 Go service 打包均已在干净 detached worktree 中通过；静态安装、版本切换、HTTP 检查和失败回滚已在本机临时部署目录中执行。其余产品完整构建、真实服务器升级和外部定时任务仍未验收。`scripts/upgrade.sh` 表示存在项目级 hook，不等于已经完成统一升级验收。
 
-旧版部分项目 `package.sh` 曾自动递增 patch、创建并推送 tag 后打包；统一 v1 将 tag 创建移到正式 release 审批步骤，由有权限的发布负责人或独立 release workflow 执行。当前 `compile_packages.sh` 和项目 `package.sh` 都不创建 tag；发布前须确认 `vX.Y.Z` 指向将写入 manifest 的同一源码 commit。操作示例和当前 main-only 发布器的限制见 [PACKAGING.md 的 Git tag 说明](./PACKAGING.md#git-tag-何时创建)。
+本轮发布流程调整中：每个项目新增 `scripts/tag.sh`，由显式打包操作自动递增 patch/minor/major、同步 `version-files.conf` 中的项目 JSON 版本、按需提交 artifact 版本覆盖、创建并推送社区 main/tag。编译器随后按 tag commit 构建。支持 `--unit-version` 设置不同 artifact 版本、`--tag` 重建已有版本。该实现尚待社区仓库 PR 合并和打包机实际执行验收；操作规则见 [PACKAGING.md 的 Git tag 说明](./PACKAGING.md#git-tag-何时创建)。
 
 这里的“安全 package API”是 `scripts/package.sh` 的命令行契约，不是 HTTP API。`scripts/package-api.json` 是每个源码仓库的调用方式/副作用声明，供发布器执行前做 fail-closed 检查；它不同于每次构建输出的 `release-manifest.json`，后者记录本次实际产物。该 JSON 不是沙箱或安全证明，必须与 detached worktree、临时输出目录、发布器校验和代码审查配合使用。完整四种制品的打包、部署和升级示例见 [PACKAGING.md 的完整流程示例](./PACKAGING.md#打包部署和升级完整流程)。
 
-对 node、warehouse、router、chat、homepage、project、social、knowledge、orchestrator、books、billing 的 11 份文件做了逐项比较，当前内容完全相同：都声明 v1、三个公共参数、不创建或推送 Git ref、使用隔离 checkout，并输出 `release-manifest.json`。仍将文件放在各仓库，是为了让该仓库明确 opt in，并使声明与对应 `package.sh` 一起随 commit 评审；发布器可在运行项目代码前检查目标仓库版本是否符合契约。它不是存项目构建差异的配置文件；构建技术栈和制品类型的差异放在 `package.sh` 与每次构建的 manifest 中。未来新增字段必须同步更新规范、发布器校验及调用行为；当前未识别的字段不会自动生效。字段逐项解释和新项目复制模板、验证声明的操作步骤见 [PACKAGING.md 的 package-api.json 说明](./PACKAGING.md#package-apijson-字段逐项说明)。
+对 node、warehouse、router、chat、homepage、project、social、knowledge、orchestrator、books、billing、wallet 的 12 份文件做了逐项比较，当前内容完全相同：都声明 v1、三个公共参数、不由 `package.sh` 创建或推送 Git ref、使用隔离 checkout，并输出 `release-manifest.json`。仍将文件放在各仓库，是为了让该仓库明确 opt in，并使声明与对应 `package.sh` 一起随 commit 评审；发布器可在运行项目代码前检查目标仓库版本是否符合契约。它不是存项目构建差异的配置文件；构建技术栈和制品类型的差异放在 `package.sh` 与每次构建的 manifest 中。未来新增字段必须同步更新规范、发布器校验及调用行为；当前未识别的字段不会自动生效。字段逐项解释和新项目复制模板、验证声明的操作步骤见 [PACKAGING.md 的 package-api.json 说明](./PACKAGING.md#package-apijson-字段逐项说明)。
 
 | 项目 | 当前交付单元 | `package.sh` | package API / manifest | starter / health / smoke | upgrade hook | 必须补齐或确认的项目缺口 |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -21,6 +21,7 @@
 | orchestrator | backend、web、agent/runtime 资源 | 有；v1 CLI | 有 / 有（backend + web + agents 组合服务） | 有 / 有 / 有（smoke 覆盖 readiness、版本 API、控制台首页和未认证访问拒绝；未覆盖需测试身份的业务闭环） | 缺 | `test.sh` 保留是因为获批服务包契约要求独立 smoke 入口，不能与 readiness 健康检查合并；脚本已改为执行实际只读 HTTP 检查，不再只是转调 health-check。仍需确认 agent/runtime 是否应独立版本化，验证目标运行环境，并决定是否纳入统一升级。 |
 | books | 社区文档、reader、payment 应用等候选单元 | 有；reader 静态站显式 ref 构建 | 有 / 有（books-reader static；本轮 fixture 验证） | reader 不适用 / 不适用 / 静态入口待验收；`saas-mvp` 是否部署待确认 | 不适用 | 已按 README 确认 VitePress reader 是静态站并新增打包入口/API；`output/` 已忽略。Payment `saas-mvp` 是另一个 FastAPI 候选应用，但仓库未提供部署证据，尚未纳入制品或增加运行服务契约。 |
 | billing | Go 后端服务 | 有；v1 CLI | 有 / 有（service；clean package 验证） | 有 / 有 / 有 | 有 | 已在干净 worktree 编译 Linux amd64 服务包，manifest、SHA-256、归档结构和必需服务入口通过校验；包外运行、smoke 和目标服务器升级仍待验收。 |
+| wallet | 浏览器扩展 | 已迁移 v1 CLI | 有 / 有（desktop ZIP） | 不适用 | 不适用 | `manifest.json.version` 作为项目版本源；ZIP 扩展包由 manifest 清单记录并校验。需在打包机验证 zip/zipinfo 工具、扩展加载和签名/商店发布流程。 |
 
 **npm 依赖策略：** node、warehouse、router、chat、homepage、project、social、knowledge、orchestrator 和 books 不跟踪 `package-lock.json`，打包脚本统一使用 `npm install`。因此 npm 依赖版本由打包时 registry 的解析结果决定，不能保证不同日期的构建得到完全相同的依赖树。该规则只针对 npm 锁文件；`composer.lock`、`uv.lock` 等其他生态的锁文件继续按各项目原有规则使用。
 
@@ -30,11 +31,11 @@
 
 8 个历史服务包脚本（node、warehouse、router、chat、project、social、knowledge、orchestrator）现已接收明确的 `--ref`、`--version`、`--output-dir`，校验当前 commit 和工作区，并输出 manifest；脚本不再 fetch/switch、创建或推送 TAG、上传制品或清理传入输出目录。homepage、books、billing 也有安全 API 声明。项目完整构建、包外运行和依赖兼容仍需逐一验收。
 
-所有 11 个仓库都有 `scripts/package-api.json`，声明支持参数、无 Git 写入能力、隔离构建和 manifest 文件名。所有实际运行服务必须随包提供符合 [PACKAGING.md](./PACKAGING.md) 的 `starter.sh`、`health-check.sh` 和 `test.sh --suite smoke`；独立静态或 desktop 单元不要求服务脚本。11 个仓库的 `output/` 均已通过 `git check-ignore` 验收。
+所有 12 个仓库都有 `scripts/package-api.json`，声明支持参数、无 Git 写入能力、隔离构建和 manifest 文件名。所有实际运行服务必须随包提供符合 [PACKAGING.md](./PACKAGING.md) 的 `starter.sh`、`health-check.sh` 和 `test.sh --suite smoke`；独立静态或 desktop 单元不要求服务脚本。12 个仓库的 `output/` 均已通过 `git check-ignore` 验收。
 
 ## 跨项目共性
 
-- 11 个仓库现在都有仓库级 `scripts/package.sh` 和 package API；`compile_packages.sh` 可从独立 `package-modules.conf` 接收与升级名单不同的仓库清单，并校验/上传多 artifact 和 static-only manifest。该配置文件需在发布节点从模板创建。
+- 12 个仓库现在都有仓库级 `scripts/package.sh` 和 package API；`compile_packages.sh` 可从独立 `package-modules.conf` 接收与升级名单不同的仓库清单，并校验/上传多 artifact 和 static-only manifest。该配置文件需在发布节点从模板创建。
 - 8 个旧服务包脚本已迁移到新 API；node、router、chat、project、orchestrator 的 smoke 入口和 knowledge、orchestrator 的 health check 会进入服务包。Homepage 静态包和 Billing Go 服务包已完成干净构建；其他产品的生产构建、服务运行环境和服务器升级验收仍未执行。静态单元不要求服务型 `starter.sh`。
 - 统一升级清单当前仅含 chat、node、project、router、social、warehouse、billing；knowledge 和 orchestrator 尚未接入。静态资源与桌面产物不能直接塞入当前服务升级清单。
 - 统一升级器的服务单元选择仍使用 legacy 包名，尚未按 manifest 选择服务 artifact；static 单元已有独立处理器，可从 `static-units.conf` 读取站点、消费 manifest、校验 SHA-256 和归档、原子切换 `current`，并在 HTTP 检查失败时恢复旧指向。Homepage 已完成本机版本切换和回滚演练；Homepage、Books 和 warehouse 的真实站点部署仍待 vhost 迁移与环境演练；desktop 暂无服务器部署处理器。
@@ -57,7 +58,7 @@
 
 当前仓库提供 `package_manifest.sh`（POSIX shell + `jq`）进行 manifest、摘要、归档结构和静态入口校验；显式发布需安装 `jq`、`tar` 和 `sha256sum` 或 `shasum`。`compile_packages.sh` 无参数时不再加载运行环境；显式发布要求项目声明安全 package API，并在临时 detached worktree 中生成和校验制品。打包仓库名单可通过独立的 `package-modules.conf` 配置，因此静态-only 仓库也能进入发布构建，而无需加入服务升级清单。
 
-所有 11 个仓库均已迁移包脚本 API。`upgrade.sh` 已增加可选静态单元处理：从 `static-units.conf` 读取已配置站点，消费版本 manifest，校验制品 SHA-256 和归档，部署到标准静态目录并执行 HTTP 检查；检查失败会恢复原 `current` 软链接。desktop 尚无服务器部署处理器。各服务的产品构建、包外运行、测试/生产升级演练、站点 vhost 迁移，以及外部调度核验仍未完成，不能据此启用新发布链路。
+所有 12 个仓库均已迁移包脚本 API。`upgrade.sh` 已增加可选静态单元处理：从 `static-units.conf` 读取已配置站点，消费版本 manifest，校验制品 SHA-256 和归档，部署到标准静态目录并执行 HTTP 检查；检查失败会恢复原 `current` 软链接。desktop 尚无服务器部署处理器。各服务的产品构建、包外运行、测试/生产升级演练、站点 vhost 迁移，以及外部调度核验仍未完成，不能据此启用新发布链路。
 
 ## Homepage 静态单元
 

@@ -41,7 +41,7 @@
 受控发布入口调用：
 
 ```bash
-RELEASE_VERSION=<major.minor.patch> operator/upgrade/compile_packages.sh --publish
+operator/upgrade/compile_packages.sh --publish [--bump patch|minor|major]
 ```
 
 构建器再以选定的 commit 调用项目脚本：
@@ -67,7 +67,7 @@ scripts/package.sh --ref <commit-sha> --version <major.minor.patch> --output-dir
 
 ### `package-api.json` 字段逐项说明
 
-当前 11 个仓库的 `scripts/package-api.json` 内容完全一致。项目之间的构建命令、依赖和交付单元可以不同；这些差异由各自的 `scripts/package.sh` 实现以及本次构建生成的 `release-manifest.json` 表达，不通过修改这份通用接口声明来表达。
+当前 12 个仓库的 `scripts/package-api.json` 内容完全一致。项目之间的构建命令、依赖和交付单元可以不同；这些差异由各自的 `scripts/package.sh` 实现以及本次构建生成的 `release-manifest.json` 表达，不通过修改这份通用接口声明来表达。
 
 | 字段 | 类型与当前约束 | 具体含义及发布器行为 |
 | --- | --- | --- |
@@ -82,7 +82,7 @@ scripts/package.sh --ref <commit-sha> --version <major.minor.patch> --output-dir
 
 ### 项目如何配置
 
-新项目接入时，在仓库的 `scripts/` 下创建 `package-api.json`，复制上面的 v1 模板并保留这些固定值。当前没有按 `service`、`static`、`desktop` 或项目语言调整这些字段的情况，也不需要在文件里填仓库名、unit ID、版本号、依赖命令或部署路径；这些属于 `package.sh` 输入/实现或 `release-manifest.json` 的内容。现有 11 个项目都使用同一份 JSON。
+新项目接入时，在仓库的 `scripts/` 下创建 `package-api.json`，复制上面的 v1 模板并保留这些固定值。当前没有按 `service`、`static`、`desktop` 或项目语言调整这些字段的情况，也不需要在文件里填仓库名、unit ID、版本号、依赖命令或部署路径；这些属于 `package.sh` 输入/实现或 `release-manifest.json` 的内容。现有 12 个项目都使用同一份 JSON。
 
 同时确认项目的 `scripts/package.sh` 实际接受并遵守声明的三个参数，通常通过共享参数解析逻辑处理。特别是 `builds_in_isolated_checkout: true` 要求脚本可以在发布器创建的 detached worktree 中运行；脚本不负责创建该 worktree，也不能假设原开发工作区、当前分支或未提交文件存在。字段是项目维护者对兼容性的承诺，只有审查实现并通过构建验证后才应保留 `true`。
 
@@ -118,31 +118,21 @@ jq -e '
 
 ### Git tag 何时创建
 
-是的，旧版部分项目的 `scripts/package.sh` 曾自动选择下一个 patch 版本、给 `main` 的提交创建 `vX.Y.Z` tag、推送 tag，再切换到 tag 对应提交打包。现在迁移的是**执行职责和时点**，不是取消正式版本 tag：项目 `package.sh` 只接收已定好的 commit 和版本并生成制品；当前 `compile_packages.sh` 也不创建 Git tag。
+每个社区仓库的 `scripts/tag.sh` 在实际打包时负责版本递增、更新版本映射、提交必要的版本变更并创建、推送 tag；`scripts/package.sh` 只在隔离 worktree 中构建制品。默认递增 patch，可用 `--bump minor` 或 `--bump major` 选择递增级别。脚本从所有有效 `vMAJOR.MINOR.PATCH` tag 中选最大版本，检查新版本严格递增，并拒绝无效参数、脏工作区、非 main 分支、落后的 main 或已有 tag。
 
-按社区的正式版本规则，PR 合并后由有权限的发布负责人（或经过批准的独立 release workflow）完成版本审批和源码标记：确定版本与精确 commit，创建并推送不可移动的 `vX.Y.Z` tag；随后用同一个版本发布制品。该动作属于显式 release 流程，不应由普通代码 push、测试环境轮询或每次打包自动触发。若一次发布涉及多个源码仓库，各仓库分别在其发布 commit 上建立对应 tag。
+打包机使用社区仓库检出，运行时每个仓库先同步社区 `main`，然后由 `compile_packages.sh` 调用项目 `scripts/tag.sh`。tag 脚本将 tag 以及版本配置提交推送到社区 remote；之后编译器从该 tag 对应 commit 创建 detached worktree，并以 tag 版本构建。该动作只由显式 `--publish` 触发。不同仓库分别维护自己的 tag 序列。
 
-当前 `compile_packages.sh --publish` 要求源码仓库处于干净的 `main`，fetch 后会尝试将其安全 fast-forward 到 `origin/main`，然后构建同步后的提交，而不是按 tag 查找提交。因此发布负责人必须在开始发布时确认 tag 指向的 commit 与同步后的 `origin/main` 一致，并核对 manifest 的 `source_commit`。tag 已创建而构建失败时，应修复原因后用相同 tag、版本和 commit 重试；不得移动或覆盖已有 tag。如果 `main` 已前进到 tag commit 之后，当前发布器不能直接重建旧 tag，应停止本次发布，先通过显式固定 ref 的发布流程补齐能力或重新审批一个新版本。
+一个仓库默认所有制品使用 tag 的同一版本。若要单独设置制品版本，在 `scripts/artifact-versions.conf` 中按 `unit-id MAJOR.MINOR.PATCH` 配置；tag 脚本会把变更纳入 release commit，打包器和 manifest 按每个 unit 的版本命名。各项目通过 `scripts/version-files.conf` 列出需要同步更新 `.version` 字段的 JSON 版本文件。tag 创建后若构建失败，不能移动或覆盖该 tag；修复问题后可用 `compile_packages.sh --publish --tag 仓库:v版本` 重建原 tag，或经审批创建新版本。
 
-示例：在每个本次正式发布的源码仓库中，由发布负责人确认 tag 尚不存在、`origin/main` 已是批准的 release commit，并配置好指向社区主仓库的 `RELEASE_REMOTE` 后执行：
-
-```bash
-RELEASE_VERSION=1.2.3
-RELEASE_TAG="v${RELEASE_VERSION}"
-RELEASE_COMMIT="$(git rev-parse origin/main)"
-
-git tag -a "$RELEASE_TAG" "$RELEASE_COMMIT" -m "Release $RELEASE_TAG"
-git push "$RELEASE_REMOTE" "$RELEASE_TAG"
-```
-
-tag 推送并复核目标 commit 后，在 deployer 构建节点用同一版本发布制品：
+示例：在打包节点的社区仓库检出中执行：
 
 ```bash
-cd /path/to/deployer/operator/upgrade
-RELEASE_VERSION=1.2.3 ./compile_packages.sh --publish
+cd /root/code/deployer/operator/upgrade
+./compile_packages.sh --publish
+./compile_packages.sh --publish --bump minor
 ```
 
-`creates_git_tags: false` 和 `pushes_git_refs: false` 约束的是项目 `scripts/package.sh`；它们不禁止获授权的发布负责人或独立 release workflow 在上述审批步骤中管理源码 tag。
+`creates_git_tags: false` 和 `pushes_git_refs: false` 仍约束项目 `scripts/package.sh`；tag 与推送由独立的 `scripts/tag.sh` 完成。
 
 ## 制品命名和清单
 
@@ -150,9 +140,10 @@ RELEASE_VERSION=1.2.3 ./compile_packages.sh --publish
 
 ```text
 <unit-id>-v<major>.<minor>.<patch>-<7-char-commit>.tar.gz
+<unit-id>-v<major>.<minor>.<patch>-<7-char-commit>.zip  # desktop
 ```
 
-`unit-id` 使用小写字母、数字和连字符；必须在所有项目间唯一。包名中的版本和短 commit 必须与制品清单一致。不可变发布禁止用相同 unit、版本和 commit 覆盖已有的不同字节内容。
+服务和静态制品使用 tar.gz；desktop 制品可保留平台分发所需的 ZIP 格式。`unit-id` 使用小写字母、数字和连字符；必须在所有项目间唯一。包名中的版本和短 commit 必须与制品清单一致。不可变发布禁止用相同 unit、版本和 commit 覆盖已有的不同字节内容。
 
 `scripts/package.sh` 在输出目录写入 `release-manifest.json`，一次构建可以列出多个可独立发布的制品：
 
@@ -219,7 +210,7 @@ manifest 的 `static_targets[].path` 固定为 `/opt/deploy/static/<site_id>`，
 
 ```bash
 cd /path/to/deployer/operator/upgrade
-RELEASE_VERSION=1.2.3 ./compile_packages.sh --publish
+./compile_packages.sh --publish
 ```
 
 发布前，`package-modules.conf` 列出的每个仓库必须位于干净的 `main`。构建器逐仓 fetch `origin/main`，仅在可安全快进时自动同步；遇到脏工作区、本地独有提交或分叉时停止，不会清理用户数据。同步后构建器检查 `scripts/package-api.json`，为选定 commit 创建 detached worktree 和空临时输出目录，再调用：
@@ -288,7 +279,7 @@ bash scripts/test.sh --suite smoke
 # 构建节点：加入待构建源码仓库
 printf '%s\n' billing >> /path/to/deployer/operator/upgrade/package-modules.conf
 cd /path/to/deployer/operator/upgrade
-RELEASE_VERSION=1.2.3 ./compile_packages.sh --publish
+./compile_packages.sh --publish
 
 # 测试部署节点：只填写已经首次安装且有当前版本目录的服务单元
 printf '%s\n' billing > /path/to/deployer/operator/upgrade/upgrade-modules.conf
@@ -320,7 +311,7 @@ node
 
 # 构建并发布
 cd /path/to/deployer/operator/upgrade
-RELEASE_VERSION=1.2.3 ./compile_packages.sh --publish
+./compile_packages.sh --publish
 
 # 环境升级
 ./upgrade.sh
@@ -359,7 +350,7 @@ homepage homepage-tidukongjian homepage-tidukongjian https://homepage.tidukongji
 ```text
 # 构建节点
 cd /path/to/deployer/operator/upgrade
-RELEASE_VERSION=1.2.3 ./compile_packages.sh --publish
+./compile_packages.sh --publish
 
 # 已迁移 vhost 的测试/生产静态部署节点
 ./upgrade.sh
@@ -382,7 +373,7 @@ Homepage 的 Nginx 配置目前仍有旧 root，不能只把上面的行加入 `
 ```text
 # 发布端：desktop artifact 跟随经批准的 release 上传
 cd /path/to/deployer/operator/upgrade
-RELEASE_VERSION=1.2.3 ./compile_packages.sh --publish
+./compile_packages.sh --publish
 
 # 客户端更新器（产品需实现）：检查平台/当前版本 -> 下载 updater 元数据和安装器
 # -> 验证产品签名与 SHA-256 -> 备份用户状态 -> 安装到暂存/新版本目录

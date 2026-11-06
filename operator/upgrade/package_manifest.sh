@@ -70,7 +70,7 @@ if ! jq -e --arg unit "$UNIT_RE" --arg ver "$VERSION_RE" --arg commit "$COMMIT_R
         ($a.unit_id | type == "string" and test($unit)) and
         ($a.type | type == "string" and (["service", "service-with-assets", "static", "desktop"] | index($a.type) != null)) and
         ($a.version | type == "string" and test($ver)) and
-        ($a.package | type == "string" and endswith(".tar.gz") and (contains("/") | not) and (contains("\\") | not)) and
+        ($a.package | type == "string" and ((if $a.type == "desktop" then endswith(".zip") else endswith(".tar.gz") end)) and (contains("/") | not) and (contains("\\") | not)) and
         ($a.sha256 | type == "string" and test($sha)) and
         ($a.package_root | type == "string" and length > 0 and (contains("/") | not) and (contains("\\") | not)) and
         (if $a.type == "static" then
@@ -125,21 +125,30 @@ while [ "$index" -lt "$artifact_count" ]; do
     checksum=$(jq -r --argjson i "$index" '.artifacts[$i].sha256' "$manifest")
     if [ -n "$expected_version" ] && [ "$version" != "$expected_version" ]; then fail "artifacts[$index].version does not match the requested release version"; fi
     short_commit=$(printf '%s\n' "$source_commit" | cut -c 1-7)
-    expected_package="${unit_id}-v${version}-${short_commit}.tar.gz"
+    if [ "$artifact_type" = desktop ]; then package_extension=.zip; else package_extension=.tar.gz; fi
+    expected_package="${unit_id}-v${version}-${short_commit}${package_extension}"
     [ "$package_name" = "$expected_package" ] || fail "artifacts[$index].package must be $expected_package"
-    [ "$package_root" = "${package_name%.tar.gz}" ] || fail "artifacts[$index].package_root must match the package name without .tar.gz"
+    if [ "$artifact_type" = desktop ]; then expected_root=${package_name%.zip}; else expected_root=${package_name%.tar.gz}; fi
+    [ "$package_root" = "$expected_root" ] || fail "artifacts[$index].package_root must match the package name without its archive extension"
     package_path="$output_dir/$package_name"
     if [ -L "$package_path" ] || [ ! -f "$package_path" ]; then fail "package does not exist as a regular file: $package_name"; fi
     actual_checksum=$(sha256_file "$package_path") || fail "cannot compute SHA-256 for $package_name"
     [ "$actual_checksum" = "$checksum" ] || fail "SHA-256 mismatch for $package_name"
-    tar -tzf "$package_path" >"$archive_list" 2>/dev/null || fail "cannot read archive $package_name"
+    if [ "$artifact_type" = desktop ]; then
+        command -v unzip >/dev/null 2>&1 || fail 'unzip is required to validate desktop ZIP artifacts'
+        command -v zipinfo >/dev/null 2>&1 || fail 'zipinfo is required to inspect desktop ZIP artifacts'
+        unzip -Z1 "$package_path" >"$archive_list" 2>/dev/null || fail "cannot read ZIP archive $package_name"
+    else
+        tar -tzf "$package_path" >"$archive_list" 2>/dev/null || fail "cannot read archive $package_name"
+    fi
     [ -s "$archive_list" ] || fail "archive is empty: $package_name"
     while IFS= read -r member || [ -n "$member" ]; do
         case "$member" in ''|/*|..|../*|*/../*|*/..) fail "archive contains an unsafe path: $member" ;; esac
         member_root=${member%%/*}
         [ "$member_root" = "$package_root" ] || fail "archive entry is outside package_root $package_root: $member"
     done < "$archive_list"
-    tar -tvzf "$package_path" >"$archive_verbose" 2>/dev/null || fail "cannot inspect archive $package_name"
+    if [ "$artifact_type" = desktop ]; then zipinfo -l "$package_path" >"$archive_verbose" 2>/dev/null || fail "cannot inspect ZIP archive $package_name"
+    else tar -tvzf "$package_path" >"$archive_verbose" 2>/dev/null || fail "cannot inspect archive $package_name"; fi
     while IFS= read -r listing || [ -n "$listing" ]; do
         case "$listing" in
             l*' -> '*) link_target=${listing##* -> } ;;

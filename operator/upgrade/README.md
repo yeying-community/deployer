@@ -66,8 +66,13 @@ chmod 600 .env
 
 ```bash
 cd /root/code/deployer/operator/upgrade
-RELEASE_VERSION=1.2.3 ./compile_packages.sh --publish
+./compile_packages.sh --publish
 ```
+
+默认对每个仓库的最大语义版本递增 patch。需要递增 minor 或 major 时执行
+`./compile_packages.sh --publish --bump minor` 或 `--bump major`。单个仓库内某个制品需要独立版本时，可以在命令中传入
+`--unit-version REPOSITORY:UNIT=VERSION`，例如 `--unit-version homepage:homepage-wallet=2.1.0`；也可以把长期版本覆盖提交到该仓库的 `scripts/artifact-versions.conf`。
+发布中断后如需重建已有 tag，可传入 `--tag 仓库:v版本`，例如 `--tag router:v0.0.163`；该仓库将按该 tag 的 commit 重建，不会再递增版本。
 
 发布前仓库必须是干净的 `main`。脚本会 fetch `origin/main`，并仅在可安全快进时自动同步；存在未提交改动、本地独有提交或分叉时会停止，不会用
 `git reset --hard` 或 `git clean -fd` 清理工作区。模块仓库必须提供 `scripts/package.sh` 和
