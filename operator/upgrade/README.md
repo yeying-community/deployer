@@ -40,7 +40,7 @@ cp .env.template .env
 chmod 600 .env
 ```
 
-`upgrade-modules.conf` 是服务升级名单，只放已有服务部署目录的模块。`package-modules.conf` 是源码仓库的打包名单，可以包含只发布静态或桌面 artifact 的仓库，两者不要求相同。每行填写一个仓库名；空行和以 `#` 开头的行会被忽略。`static-units.conf` 每行使用 `repository unit_id site_id health_base_url` 格式；只有在相应 vhost 已指向 `/opt/deploy/static/<site_id>/current` 且健康 URL 可从部署节点访问后，才启用对应行。
+`upgrade-modules.conf` 是服务升级名单，只放已有服务部署目录的模块。纯静态升级可以不创建该文件，但必须在 `static-units.conf` 配置至少一个有效站点；配置了服务名单时，`upgrade.sh` 仍会按名单检查服务，因此执行前要确认其中每个服务都允许参与本轮检查。`package-modules.conf` 是源码仓库的打包名单，可以包含只发布静态或桌面 artifact 的仓库，两者不要求相同。每行填写一个仓库名；空行和以 `#` 开头的行会被忽略。`static-units.conf` 每行使用 `repository unit_id site_id health_base_url` 格式；只有在相应 vhost 已指向 `/opt/deploy/static/<site_id>/current` 且健康 URL 可从部署节点访问后，才启用对应行。
 
 现有机器需迁移配置名：旧 `modules.conf` 的服务升级名单移至 `upgrade-modules.conf`；如果打包曾依赖回退读取 `modules.conf`，需把源码仓库清单单独写入 `package-modules.conf`；旧 `package_modules.conf` 改名为 `package-modules.conf`。脚本只读取新名称，不再兼容旧文件名。
 编辑
