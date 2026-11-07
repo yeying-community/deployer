@@ -228,7 +228,7 @@ bash scripts/package.sh \
   --output-dir <空临时目录>
 ```
 
-项目脚本按自身技术栈构建一个或多个 unit，写出归档和 `release-manifest.json`。deployer 检查仓库名、版本、commit、unit 类型、包名、SHA-256、归档根目录和类型要求；全部通过后，上传不可变归档和版本化清单 `release-manifest-<repository>-v<version>-<commit>.json`。失败时返回非零，不能发布半套 manifest 或假装成功。
+项目脚本按自身技术栈构建一个或多个 unit，写出归档和 `release-manifest.json`。deployer 检查仓库名、版本、commit、unit 类型、包名、SHA-256、归档根目录和类型要求；全部通过后，上传不可变归档和版本化清单 `release-manifest-<repository>-v<version>-<source-commit>.json`。清单文件名中的短 SHA 必须与清单 `source_commit` 字段及 artifact 包名一致；tag-only release commit 的 SHA 不用于制品身份。失败时返回非零，不能发布半套 manifest 或假装成功。
 
 例如 Homepage 仓库的一次本地打包调用形式是：
 
