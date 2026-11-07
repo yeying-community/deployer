@@ -619,6 +619,11 @@ parse_package_name() {
     return 0
 }
 
+release_manifest_filename() {
+    local repository=$1 version=$2 source_commit=$3
+    printf 'release-manifest-%s-v%s-%s.json' "$repository" "$version" "${source_commit:0:7}"
+}
+
 if [[ ! -f "$transfer_script" ]]; then
     log "ERROR! transfer script is missing: ${transfer_script}"
     exit 1
@@ -915,7 +920,7 @@ for module_name in "${MODULES[@]}"; do
     done
 
     if [[ "$module_publish_status" -eq 0 ]]; then
-        manifest_filename="release-manifest-${module_name}-v${release_version}-${latest_commit:0:7}.json"
+        manifest_filename=$(release_manifest_filename "$module_name" "$release_version" "$source_commit")
         manifest_destination="${package_root}/${manifest_filename}"
         if [[ -e "$manifest_destination" ]]; then
             if [[ ! -f "$manifest_destination" || -L "$manifest_destination" ]] || ! cmp -s "$manifest_file" "$manifest_destination"; then
