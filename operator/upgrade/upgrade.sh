@@ -328,10 +328,39 @@ fi
 
 validate_file_verify_config || exit 1
 
-load_modules "$config_file" || {
-    usage
-    exit 1
+config_has_active_rows() {
+    local file=$1
+    [[ -f "$file" ]] || return 1
+    awk '
+        {
+            line = $0
+            sub(/\r$/, "", line)
+            sub(/^[[:space:]]+/, "", line)
+            if (line != "" && substr(line, 1, 1) != "#") found = 1
+        }
+        END { exit !found }
+    ' "$file"
 }
+
+load_upgrade_targets() {
+    MODULES=()
+    if config_has_active_rows "$config_file"; then
+        load_modules "$config_file" || {
+            usage
+            return 1
+        }
+    fi
+    if [[ ${#MODULES[@]} -eq 0 ]]; then
+        if ! config_has_active_rows "$static_units_config"; then
+            log "ERROR! no service modules are configured in ${config_file}, and no static units are configured in ${static_units_config}."
+            usage
+            return 1
+        fi
+        log "no service modules configured; running static-only upgrade from ${static_units_config}"
+    fi
+}
+
+load_upgrade_targets || exit 1
 
 update_active_module_symlink() {
     local module_name=$1
