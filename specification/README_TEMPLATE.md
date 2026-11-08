@@ -35,6 +35,7 @@
 - 本地如何启动
 - 本地如何验证已经跑起来
 - 如果依赖中间件，本地应该先看哪个 `middleware/` 文档
+- 项目的关键概念和术语应该去哪里查
 - 生产部署应该去看哪份文档
 
 ## 必选章节
@@ -315,6 +316,7 @@ cp .env.template .env
 
 ## 相关文档
 
+- 项目关键概念：必须链接项目维护的核心概念文档，参考 `specification/KEY_CONCEPTS_TEMPLATE.md`
 - 生产部署文档：参考 `DEPLOYMENT.md` 或基于 `specification/DEPLOYMENT_TEMPLATE.md` 编写的部署文档
 - 社区协作流程：参考 `specification/GITHUB_FORK.md` 和 `specification/GITHUB_PULL_REQUEST.md`
 - 中间件依赖：参考仓库 `middleware/` 下对应组件文档

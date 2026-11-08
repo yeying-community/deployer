@@ -4,6 +4,12 @@
 
 ## 文档索引
 
+- [DOCUMENTATION_GUIDELINES.md](./DOCUMENTATION_GUIDELINES.md)
+  各项目文档职责、质量要求、维护方法和发布前检查；要求每个项目维护独立的关键概念文档
+
+- [KEY_CONCEPTS_TEMPLATE.md](./KEY_CONCEPTS_TEMPLATE.md)
+  项目关键概念文档模板，用于集中解释核心概念及其边界
+
 - [DESIGN_PROPOSAL_TEMPLATE.md](./DESIGN_PROPOSAL_TEMPLATE.md)  
   社区评审使用的详细设计方案模板（含 AI 协作记录与提示词模板）
 
