@@ -6,7 +6,7 @@
 3. 在域名解析对应的公网ip机器上生成TLS证书，通常使用certbot命令
 
 以下是在minio的启动节点上进行的操作
-1. 拷贝.env.template到.env，然后根据需要修改里面的参数，使用域名访问时需要容器配置环境变量MINIO_BROWSER_REDIRECT_URL=<url>/web。如果你想使用新密码，请使用script/generate_password.sh <password length>生成
+1. 拷贝.env.template到.env，然后根据需要修改里面的参数，使用域名访问时需要容器配置环境变量MINIO_BROWSER_REDIRECT_URL=<url>/web。如果你想使用新密码，请使用scripts/generate_password.sh <password length>生成
 2. 执行命令：docker compose up -d
 
 
