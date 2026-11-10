@@ -69,6 +69,9 @@ cd /root/code/deployer/operator/upgrade
 ./compile_packages.sh --publish
 ```
 
+只处理单个仓库时执行 `./compile_packages.sh --module <模块名>`；此模式不读取
+`package-modules.conf`，其余构建、校验和上传流程与 `--publish` 相同。
+
 默认对每个仓库的最大语义版本递增 patch。版本文件变更只存在于 tag 指向的 release commit，不推送到社区 `main`；tag 的父提交是打包时最新的 `main` commit，制品名和 manifest 使用该 `main` commit 的短哈希。需要递增 minor 或 major 时执行
 `./compile_packages.sh --publish --bump minor` 或 `--bump major`。单个仓库内某个制品需要独立版本时，可以在命令中传入
 `--unit-version REPOSITORY:UNIT=VERSION`，例如 `--unit-version homepage:homepage-wallet=2.1.0`；也可以把长期版本覆盖提交到该仓库的 `scripts/artifact-versions.conf`。

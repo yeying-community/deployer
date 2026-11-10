@@ -7,11 +7,15 @@ if [[ $# -eq 0 ]]; then
 fi
 release_bump="patch"
 publish_requested=0
+selected_module=""
 release_unit_versions=()
 release_tags=()
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --publish) publish_requested=1; shift ;;
+        --module)
+            [[ $# -ge 2 && -n "$2" ]] || { printf '%s\n' "--module requires a module name" >&2; exit 2; }
+            selected_module="$2"; publish_requested=1; shift 2 ;;
         --bump)
             [[ $# -ge 2 ]] || { printf '%s\n' "--bump requires patch, minor, or major" >&2; exit 2; }
             release_bump="$2"; shift 2 ;;
@@ -24,11 +28,11 @@ while [[ $# -gt 0 ]]; do
             [[ "$2" =~ ^[a-z0-9]+(-[a-z0-9]+)*:v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || { printf 'Invalid --tag value: %s\n' "$2" >&2; exit 2; }
             release_tags+=("$2"); shift 2 ;;
         --help|-h)
-            printf 'Usage: %s --publish [--bump patch|minor|major] [--tag REPOSITORY:vVERSION] [--unit-version REPOSITORY:UNIT=VERSION ...]\n' "$0"; exit 0 ;;
-    *) printf 'Unknown option: %s\nUsage: %s --publish [--bump patch|minor|major] [--tag REPOSITORY:vVERSION] [--unit-version REPOSITORY:UNIT=VERSION ...]\n' "$1" "$0" >&2; exit 2 ;;
+            printf 'Usage: %s (--publish | --module MODULE) [--bump patch|minor|major] [--tag REPOSITORY:vVERSION] [--unit-version REPOSITORY:UNIT=VERSION ...]\n' "$0"; exit 0 ;;
+    *) printf 'Unknown option: %s\nUsage: %s (--publish | --module MODULE) [--bump patch|minor|major] [--tag REPOSITORY:vVERSION] [--unit-version REPOSITORY:UNIT=VERSION ...]\n' "$1" "$0" >&2; exit 2 ;;
     esac
 done
-[[ "$publish_requested" -eq 1 ]] || { printf '%s\n' 'Usage: compile_packages.sh --publish [--bump patch|minor|major] [--unit-version REPOSITORY:UNIT=VERSION ...]' >&2; exit 2; }
+[[ "$publish_requested" -eq 1 ]] || { printf '%s\n' 'Usage: compile_packages.sh (--publish | --module MODULE) [--bump patch|minor|major] [--tag REPOSITORY:vVERSION] [--unit-version REPOSITORY:UNIT=VERSION ...]' >&2; exit 2; }
 [[ "$release_bump" == patch || "$release_bump" == minor || "$release_bump" == major ]] || { printf 'Invalid bump type: %s (expected patch, minor, or major)\n' "$release_bump" >&2; exit 2; }
 
 set -euo pipefail
@@ -190,9 +194,9 @@ ensure_release_notes_codex() {
 }
 
 usage() {
-    log "Usage: $0 --publish [--bump patch|minor|major] [--tag REPOSITORY:vVERSION] [--unit-version REPOSITORY:UNIT=VERSION ...]"
+    log "Usage: $0 (--publish | --module MODULE) [--bump patch|minor|major] [--tag REPOSITORY:vVERSION] [--unit-version REPOSITORY:UNIT=VERSION ...]"
     log "Without --publish, automatic package build and upload are disabled."
-    log "With --publish, read repositories from ${package_config_file}, then build, validate, and upload their artifacts."
+    log "With --publish, read repositories from ${package_config_file}; with --module, process only the selected module."
 }
 
 if [[ -z "${notify_from}" ]]; then
@@ -478,7 +482,11 @@ notify_upload_failure() {
 
 validate_file_verify_config || exit 1
 
-load_modules "$package_config_file" || {
+if [[ -n "$selected_module" ]]; then
+    load_modules "$package_config_file" "$selected_module"
+else
+    load_modules "$package_config_file"
+fi || {
     usage
     exit 1
 }
