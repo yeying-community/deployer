@@ -134,6 +134,7 @@ bash operator/package/tests/test_package_manifest.sh
 bash operator/package/tests/test_package_api_common.sh
 bash operator/package/tests/test_compile_packages_sync.sh
 bash operator/package/tests/test_compile_manifest_filename.sh
+bash operator/package/tests/test_compile_profile.sh
 bash operator/package/tests/test_auto_package.sh
 bash operator/package/tests/test_auto_package_state.sh
 ```
