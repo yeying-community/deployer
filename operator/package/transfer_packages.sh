@@ -9,7 +9,7 @@ source "${script_dir}/../common/common.sh"
 
 init_log_file "transfer-packages.log"
 
-env_file="${script_dir}/.env"
+env_file="${WEBDAV_PACKAGE_ENV_FILE:-${script_dir}/.env}"
 package_root="/opt/package"
 webdav_dir_url=""
 AUTH_ARGS=()

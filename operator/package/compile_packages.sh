@@ -138,6 +138,7 @@ if [[ -f "$env_file" ]]; then
     source "$env_file"
     set +a
 fi
+export WEBDAV_PACKAGE_ENV_FILE="$env_file"
 
 # True: read *_RECEIVER from .env and @userIds; False: no @
 dingtalk_need_at="${DINGTALK_NEED_AT:-False}"

@@ -2,8 +2,9 @@
 
 此目录用于存放社区项目的编译、升级、监控、备份、通知、错误分析和变更辅助脚本。
 
-升级相关操作从 [`upgrade/README.md`](./upgrade/README.md) 开始；它说明统一入口、
-配置、安装包要求、项目升级钩子和回退方式。跨项目的正式规范见
+打包和升级分别由 [`package/README.md`](./package/README.md) 与
+[`upgrade/README.md`](./upgrade/README.md) 说明：前者负责创建、校验和发布制品；后者负责在服务节点部署制品。
+跨项目的正式规范见
 [`../specification/UPGRADE.md`](../specification/UPGRADE.md) 和
 [`../specification/PACKAGING.md`](../specification/PACKAGING.md)。
 
@@ -15,8 +16,13 @@
 
 ### `upgrade/`
 
-提供统一的 `upgrade.sh`、制品编译和传输脚本。项目定制升级逻辑不放在本目录；
+提供统一的 `upgrade.sh`、静态制品部署器和升级配置。项目定制升级逻辑不放在本目录；
 纳入统一升级流程的模块必须在安装包中提供 `scripts/upgrade.sh`，由统一入口按标准钩子调用。
+
+### `package/`
+
+提供 `compile_packages.sh`、自动打包、manifest 校验、WebDAV 制品传输和打包配置；
+运行说明见该目录 README。升级入口会调用这里的传输脚本和 manifest 校验器。
 
 ### `monitor/`
 
