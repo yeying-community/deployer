@@ -1,0 +1,14 @@
+# Opt-in allowlist for scheduled package releases.
+# One row per Git pathspec: repository pathspec
+# Use a project-specific list of build inputs; use . only if every main change
+# should produce a release for that repository.
+# Inline comments are not supported.
+#
+# Examples (uncomment and adjust after reviewing each package.sh):
+# router :(glob)internal/**/*.go
+# router go.mod
+# router scripts/
+# homepage yeying/
+# homepage tidukongjian/
+# homepage wallet/
+# homepage scripts/

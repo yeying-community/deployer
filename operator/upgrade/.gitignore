@@ -4,3 +4,4 @@ package_modules.conf
 package-modules.conf
 upgrade-modules.conf
 static-units.conf
+auto-package-paths.conf

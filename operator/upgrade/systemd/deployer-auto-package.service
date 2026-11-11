@@ -1,0 +1,14 @@
+[Unit]
+Description=Check opted-in YeYing repositories and publish changed packages
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+UMask=0077
+WorkingDirectory=/root/code/deployer/operator/upgrade
+ExecStart=/root/code/deployer/operator/upgrade/auto_package.sh
+StandardOutput=journal
+StandardError=journal

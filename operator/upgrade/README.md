@@ -62,7 +62,7 @@ chmod 600 .env
 
 ### 编译并上传制品
 
-自动打包已停用。无参数调用为空操作退出以兼容旧定时项；人工或受控 release workflow 必须显式执行：
+普通打包命令不会自动发布。人工或受控 release workflow 显式执行：
 
 ```bash
 cd /root/code/deployer/operator/upgrade
@@ -73,6 +73,75 @@ cd /root/code/deployer/operator/upgrade
 `./compile_packages.sh --publish --bump minor` 或 `--bump major`。单个仓库内某个制品需要独立版本时，可以在命令中传入
 `--unit-version REPOSITORY:UNIT=VERSION`，例如 `--unit-version homepage:homepage-wallet=2.1.0`；也可以把长期版本覆盖提交到该仓库的 `scripts/artifact-versions.conf`。
 tag 创建后若构建或上传失败，保留该 tag；重试时使用 `--tag` 重建同一版本，不要默认再次递增。发布中断后如需重建已有 tag，可传入 `--tag 仓库:v版本`，例如 `--tag router:v0.0.163`；该仓库将按该 tag 的 commit 重建，不会再递增版本。
+
+### 定时检查并自动发布白名单项目
+
+`auto_package.sh` 是独立的自动发布入口。它只处理 `auto-package-paths.conf` 中列出的仓库；仓库还必须列在 `package-modules.conf` 中。脚本检查每个仓库配置的 Git pathspec，只有自上次检查点以来这些路径有变化时，才调用 `compile_packages.sh` 发布。配置格式为每行一个 `仓库 pathspec`，同一仓库可以有多行；pathspec 按 Git pathspec 语法解释，不支持空格和行内注释。建议明确列出构建输入，例如源码、依赖描述、前端资源和打包脚本。使用 `.` 表示该仓库任意文件变化都触发发布。
+
+首次部署或更新自动打包功能时，先在打包机把 deployer 快进到社区 `main` 最新版本。确认工作区没有需要保留的本地改动；不要用强制 reset 清理工作区：
+
+```bash
+cd /root/code/deployer
+git fetch origin main
+git status --short
+git switch main
+git merge --ff-only origin/main
+cd /root/code/deployer/operator/upgrade
+```
+
+确认打包机已有 `package-modules.conf`、`.env`、Git tag 推送凭据和 WebDAV 上传凭据，并安装 `jq`。自动名单只能引用 `package-modules.conf` 中的仓库。
+
+```bash
+cd /root/code/deployer/operator/upgrade
+cp auto-package-paths.conf.template auto-package-paths.conf
+vi auto-package-paths.conf
+```
+
+先确认各项目 `scripts/package.sh` 的输入，再配置 pathspec。首次启用只建立基准，不构建、不创建 tag、不上传：
+
+```bash
+./auto_package.sh --initialize
+```
+
+初始化后可以先用 `./auto_package.sh --check` 查看待发布仓库和 tag 重试计划；该检查不构建、不创建 tag、不推进检查点。
+
+如果之后新增一个仓库到 allowlist，只初始化该仓库：
+
+```bash
+./auto_package.sh --initialize router
+```
+
+例行检查前会 fetch 每个仓库的 `origin/main`，要求本地检出位于干净的 `main`。无相关变更时只推进该仓库的检查点；有相关变更时，仅将变更仓库传给编译器。成功上传 manifest 后，检查点以该 manifest 的 `source_commit` 更新。编译、校验或上传失败不会推进失败仓库的检查点；已创建的 tag 会记入 `/var/lib/deployer-auto-package/<repository>.pending`，下次按同一 tag 重试。若进程恰好在 tag 创建后、记录待重试状态前退出，下一轮会检查 checkpoint 与远端 tag，并恢复对应版本。
+
+安装随仓库提供的 systemd 单元：
+
+```bash
+cd /root/code/deployer/operator/upgrade
+test -x ./compile_packages.sh
+test -f ./package-modules.conf
+test -f .env
+command -v jq
+systemd-analyze verify systemd/deployer-auto-package.service systemd/deployer-auto-package.timer
+chmod 700 auto_package.sh
+install -m 0644 systemd/deployer-auto-package.service /etc/systemd/system/
+install -m 0644 systemd/deployer-auto-package.timer /etc/systemd/system/
+systemctl daemon-reload
+systemctl enable --now deployer-auto-package.timer
+```
+
+该 timer 每 15 分钟运行一次，重启后会补跑错过的周期，随机延迟最多 60 秒。查看状态和日志：
+
+```bash
+systemctl list-timers deployer-auto-package.timer
+systemctl start deployer-auto-package.service
+systemctl status deployer-auto-package.service
+journalctl -u deployer-auto-package.service -n 100 --no-pager
+tail -n 100 /opt/logs/auto-package.log
+```
+
+启用前先手动运行 `--initialize` 和 `--check`，确认 pathspec 与变更名单，再启用 timer。之后选一个低风险仓库提交一次配置路径内的变更，确认只生成该仓库的新 tag、manifest 和制品。若要暂停自动发布，执行 `systemctl disable --now deployer-auto-package.timer`；保留成功检查点和待重试状态，确认原因后再恢复。该任务只构建、校验并上传制品，不执行 `upgrade.sh`。但若测试环境已有轮询升级任务，制品上传后测试环境可能自动升级；生产升级仍单独审批和触发。
+
+自动发布使用打包机现有的 Git tag 推送和 WebDAV 上传凭据。为 GitHub 凭据使用最小仓库范围，并由仓库规则独立保护 `main`：要求 PR 和状态检查，且不要把打包凭据加入绕过名单；同时用 tag ruleset 禁止删除或移动 `v*` 发布 tag。不要在 systemd unit 或脚本命令行中写入 token。systemd 服务以 root 运行，是为了兼容当前 `/root/code`、`/root` 下 `.env` 和 `/opt` 目录布局。
 
 发布前仓库必须是干净的 `main`。脚本会 fetch `origin/main`，并仅在可安全快进时自动同步；存在未提交改动或无法安全识别的本地独有提交/分叉时会停止，不会用
 `git reset --hard` 或 `git clean -fd` 清理工作区。仅当本地分支停在旧版流程创建并打 tag 的单个版本提交上，该提交的唯一父提交仍属于当前 `origin/main` 历史，且提交只改动版本配置时，脚本会用 `git reset --keep origin/main` 恢复工作分支；这也支持旧版本 tag 的父提交之后经 PR 合并继续前进的场景。tag 会保留该版本提交，供 `--tag` 重建。模块仓库必须提供 `scripts/package.sh` 和
@@ -123,6 +192,13 @@ manifest 校验回归测试可在 deployer 仓库运行：
 
 ```bash
 bash operator/upgrade/tests/test_package_manifest.sh
+```
+
+自动发布路径、检查点和失败 tag 重试测试：
+
+```bash
+bash operator/upgrade/tests/test_auto_package.sh
+bash operator/upgrade/tests/test_auto_package_state.sh
 ```
 
 ## 项目升级钩子

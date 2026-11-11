@@ -1,0 +1,11 @@
+[Unit]
+Description=Check opted-in YeYing repositories for package changes every 15 minutes
+
+[Timer]
+OnCalendar=*-*-* *:0/15:00
+Persistent=true
+RandomizedDelaySec=60
+Unit=deployer-auto-package.service
+
+[Install]
+WantedBy=timers.target
