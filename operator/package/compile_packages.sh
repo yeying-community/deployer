@@ -42,11 +42,21 @@ done
 set -euo pipefail
 shopt -s nullglob
 
+load_host_profile() {
+    local profile_file=${1:-/etc/profile}
+    [[ -f "$profile_file" ]] || return 0
+
+    # Login profiles may reference optional system variables (for example
+    # XDG_DATA_DIRS) that are absent in systemd or other non-login contexts.
+    # Load their PATH and tool setup without letting nounset abort the release.
+    set +u
+    # shellcheck disable=SC1090
+    source "$profile_file" >/dev/null 2>&1 || true
+    set -euo pipefail
+}
+
 # Load host-managed environment only for an explicit release run.
-if [[ -f /etc/profile ]]; then
-    # shellcheck disable=SC1091
-    source /etc/profile >/dev/null 2>&1 || true
-fi
+load_host_profile /etc/profile
 
 script_dir=$(cd "$(dirname "$0")" || exit 1; pwd)
 # shellcheck disable=SC1091
