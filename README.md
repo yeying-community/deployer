@@ -24,7 +24,7 @@
 - `operator/`
   运维脚本、升级脚本、监控和变更辅助工具
 
-- `script/` 与 `scripts/`
+- `scripts/`
   通用辅助脚本，以及仓库协作流程脚本
 
 - `specification/`

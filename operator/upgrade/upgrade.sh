@@ -23,7 +23,7 @@ static_units_config="${script_dir}/static-units.conf"
 env_file="${script_dir}/.env"
 package_root="/opt/package"
 deploy_root="/opt/deploy"
-transfer_script="${script_dir}/transfer_packages.sh"
+transfer_script="${script_dir}/../package/transfer_packages.sh"
 dingtalk_script="${script_dir}/../dingtalk-notify/dingtalk_reminder.py"
 dingtalk_scene="upgrade_service"
 dingtalk_force_at="True"
@@ -81,6 +81,7 @@ if [[ -f "$env_file" ]]; then
     source "$env_file"
     set +a
 fi
+export WEBDAV_PACKAGE_ENV_FILE="$env_file"
 
 # True: read *_RECEIVER from .env and @userIds; False: no @
 dingtalk_need_at="${DINGTALK_NEED_AT:-False}"
@@ -523,7 +524,7 @@ upgrade_static_units() {
             overall_status=1
             continue
         fi
-        if ! "${script_dir}/package_manifest.sh" "$manifest_file" --repository "$repository" --source-commit "$source_commit" >> "$LOGFILE" 2>&1; then
+        if ! "${script_dir}/../package/package_manifest.sh" "$manifest_file" --repository "$repository" --source-commit "$source_commit" >> "$LOGFILE" 2>&1; then
             log "ERROR! static release manifest or artifact validation failed: ${manifest_name}"
             overall_status=1
             continue

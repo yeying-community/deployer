@@ -66,7 +66,7 @@ serverPort = <通信端口>
 name = "secret_ssh_visitor"
 type = "stcp"
 serverName = "r730xd101"   # 根据实际情况进行修改
-secretKey = "------------" # 使用 script/generate_password.sh 生成，长度不低于12
+secretKey = "------------" # 使用 scripts/generate_password.sh 生成，长度不低于12
 bindAddr = "127.0.0.1"
 bindPort = <代理端口>
 ```

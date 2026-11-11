@@ -9,6 +9,8 @@ release_bump="patch"
 publish_requested=0
 release_unit_versions=()
 release_tags=()
+modules_file_override=""
+success_state_dir=""
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --publish) publish_requested=1; shift ;;
@@ -23,12 +25,18 @@ while [[ $# -gt 0 ]]; do
             [[ $# -ge 2 ]] || { printf '%s\n' "--tag requires REPOSITORY:vMAJOR.MINOR.PATCH" >&2; exit 2; }
             [[ "$2" =~ ^[a-z0-9]+(-[a-z0-9]+)*:v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || { printf 'Invalid --tag value: %s\n' "$2" >&2; exit 2; }
             release_tags+=("$2"); shift 2 ;;
+        --modules-file)
+            [[ $# -ge 2 ]] || { printf '%s\n' "--modules-file requires a repository list file" >&2; exit 2; }
+            modules_file_override="$2"; shift 2 ;;
+        --success-state-dir)
+            [[ $# -ge 2 ]] || { printf '%s\n' "--success-state-dir requires a state directory" >&2; exit 2; }
+            success_state_dir="$2"; shift 2 ;;
         --help|-h)
-            printf 'Usage: %s --publish [--bump patch|minor|major] [--tag REPOSITORY:vVERSION] [--unit-version REPOSITORY:UNIT=VERSION ...]\n' "$0"; exit 0 ;;
-    *) printf 'Unknown option: %s\nUsage: %s --publish [--bump patch|minor|major] [--tag REPOSITORY:vVERSION] [--unit-version REPOSITORY:UNIT=VERSION ...]\n' "$1" "$0" >&2; exit 2 ;;
+            printf 'Usage: %s --publish [--bump patch|minor|major] [--tag REPOSITORY:vVERSION] [--unit-version REPOSITORY:UNIT=VERSION ...] [--modules-file FILE] [--success-state-dir DIR]\n' "$0"; exit 0 ;;
+    *) printf 'Unknown option: %s\nUsage: %s --publish [--bump patch|minor|major] [--tag REPOSITORY:vVERSION] [--unit-version REPOSITORY:UNIT=VERSION ...] [--modules-file FILE] [--success-state-dir DIR]\n' "$1" "$0" >&2; exit 2 ;;
     esac
 done
-[[ "$publish_requested" -eq 1 ]] || { printf '%s\n' 'Usage: compile_packages.sh --publish [--bump patch|minor|major] [--unit-version REPOSITORY:UNIT=VERSION ...]' >&2; exit 2; }
+[[ "$publish_requested" -eq 1 ]] || { printf '%s\n' 'Usage: compile_packages.sh --publish [--bump patch|minor|major] [--tag REPOSITORY:vVERSION] [--unit-version REPOSITORY:UNIT=VERSION ...] [--modules-file FILE] [--success-state-dir DIR]' >&2; exit 2; }
 [[ "$release_bump" == patch || "$release_bump" == minor || "$release_bump" == major ]] || { printf 'Invalid bump type: %s (expected patch, minor, or major)\n' "$release_bump" >&2; exit 2; }
 
 set -euo pipefail
@@ -63,7 +71,7 @@ init_log_file "check-code-status.log"
 lock_file="${COMPILE_PACKAGES_LOCK_FILE:-/tmp/operator-compile-packages.lock}"
 lock_notice_file="${COMPILE_PACKAGES_LOCK_NOTICE_FILE:-${lock_file}.notice}"
 lock_notice_interval="${COMPILE_PACKAGES_LOCK_NOTICE_INTERVAL_SECONDS:-300}"
-package_config_file="${script_dir}/package-modules.conf"
+package_config_file="${modules_file_override:-${script_dir}/package-modules.conf}"
 env_file="${script_dir}/.env"
 code_root="/root/code"
 package_root="/opt/package"
@@ -89,10 +97,17 @@ cleanup_active_build() {
 trap cleanup_active_build EXIT
 
 acquire_compile_lock() {
+    if [[ "${COMPILE_PACKAGES_LOCK_HELD:-0}" == "1" ]]; then
+        log "compile packages release lock held by automatic package runner: ${lock_file}"
+        return 0
+    fi
     touch "$lock_file"
     exec 200<>"$lock_file"
     if ! flock -n 200; then
-        local now last_notice holder
+        local now last_notice holder busy_exit_code
+
+        busy_exit_code="${COMPILE_PACKAGES_LOCK_BUSY_EXIT_CODE:-0}"
+        [[ "$busy_exit_code" =~ ^[0-9]+$ ]] && (( busy_exit_code <= 255 )) || busy_exit_code=2
 
         now=$(date +%s)
         last_notice=0
@@ -106,7 +121,7 @@ acquire_compile_lock() {
             touch "$lock_notice_file"
         fi
 
-        exit 0
+        exit "$busy_exit_code"
     fi
 
     : > "$lock_file"
@@ -123,6 +138,7 @@ if [[ -f "$env_file" ]]; then
     source "$env_file"
     set +a
 fi
+export WEBDAV_PACKAGE_ENV_FILE="$env_file"
 
 # True: read *_RECEIVER from .env and @userIds; False: no @
 dingtalk_need_at="${DINGTALK_NEED_AT:-False}"
@@ -190,7 +206,7 @@ ensure_release_notes_codex() {
 }
 
 usage() {
-    log "Usage: $0 --publish [--bump patch|minor|major] [--tag REPOSITORY:vVERSION] [--unit-version REPOSITORY:UNIT=VERSION ...]"
+    log "Usage: $0 --publish [--bump patch|minor|major] [--tag REPOSITORY:vVERSION] [--unit-version REPOSITORY:UNIT=VERSION ...] [--modules-file FILE] [--success-state-dir DIR]"
     log "Without --publish, automatic package build and upload are disabled."
     log "With --publish, read repositories from ${package_config_file}, then build, validate, and upload their artifacts."
 }
@@ -624,6 +640,44 @@ release_manifest_filename() {
     printf 'release-manifest-%s-v%s-%s.json' "$repository" "$version" "${source_commit:0:7}"
 }
 
+write_auto_pending_tag() {
+    local state_dir=$1 repository=$2 tag=$3 source_commit=$4 temp_file attempts=0 current_tag="" current_source=""
+    [[ "$repository" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ ]] || return 1
+    [[ "$tag" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || return 1
+    [[ "$source_commit" =~ ^[0-9a-f]{40}$ ]] || return 1
+    mkdir -p "$state_dir" || return 1
+    if [[ -f "${state_dir}/${repository}.pending" ]]; then
+        current_tag=$(sed -n '1p' "${state_dir}/${repository}.pending")
+        current_source=$(sed -n '2p' "${state_dir}/${repository}.pending")
+        if [[ "$current_tag" == "$tag" && "$current_source" == "$source_commit" ]]; then
+            attempts=$(sed -n '3p' "${state_dir}/${repository}.pending")
+            [[ "$attempts" =~ ^[0-9]+$ ]] || attempts=0
+        fi
+    fi
+    attempts=$((attempts + 1))
+    temp_file=$(mktemp "${state_dir}/.${repository}.pending.XXXXXX") || return 1
+    printf '%s\n%s\n%s\n' "$tag" "$source_commit" "$attempts" > "$temp_file" || { rm -f "$temp_file"; return 1; }
+    chmod 600 "$temp_file" || { rm -f "$temp_file"; return 1; }
+    mv -f "$temp_file" "${state_dir}/${repository}.pending"
+}
+
+write_auto_success_state() {
+    local state_dir=$1 repository=$2 source_commit=$3 temp_file pending_source=""
+    [[ "$repository" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ ]] || return 1
+    [[ "$source_commit" =~ ^[0-9a-f]{40}$ ]] || return 1
+    mkdir -p "$state_dir" || return 1
+    temp_file=$(mktemp "${state_dir}/.${repository}.source.XXXXXX") || return 1
+    printf '%s\n' "$source_commit" > "$temp_file" || { rm -f "$temp_file"; return 1; }
+    chmod 600 "$temp_file" || { rm -f "$temp_file"; return 1; }
+    mv -f "$temp_file" "${state_dir}/${repository}.source" || return 1
+    if [[ -f "${state_dir}/${repository}.pending" ]]; then
+        pending_source=$(sed -n '2p' "${state_dir}/${repository}.pending")
+        if [[ "$pending_source" == "$source_commit" ]]; then
+            rm -f "${state_dir}/${repository}.pending" || return 1
+        fi
+    fi
+}
+
 if [[ ! -f "$transfer_script" ]]; then
     log "ERROR! transfer script is missing: ${transfer_script}"
     exit 1
@@ -744,6 +798,12 @@ for module_name in "${MODULES[@]}"; do
         continue
     fi
     release_version="${latest_tag#v}"
+
+    if [[ -n "$success_state_dir" ]] && ! write_auto_pending_tag "$success_state_dir" "$module_name" "$latest_tag" "$source_commit"; then
+        log "ERROR! unable to persist pending automatic release state for ${module_name} ${latest_tag}"
+        overall_status=1
+        continue
+    fi
 
     active_build_repo="$module_dir"
     active_build_workspace=$(mktemp -d "${TMPDIR:-/tmp}/compile-packages-${module_name}.XXXXXX")
@@ -934,6 +994,13 @@ for module_name in "${MODULES[@]}"; do
         if ! upload_with_retry "$manifest_filename" "False"; then
             log "ERROR! failed to upload release manifest for ${module_name}"
             overall_status=1
+        elif [[ -n "$success_state_dir" ]]; then
+            if write_auto_success_state "$success_state_dir" "$module_name" "$source_commit"; then
+                log "automatic release checkpoint updated for ${module_name}: ${source_commit}"
+            else
+                log "ERROR! unable to update automatic release checkpoint for ${module_name}; pending tag ${latest_tag} is retained for retry"
+                overall_status=1
+            fi
         fi
     else
         log "ERROR! release manifest not published because one or more artifacts failed: ${module_name}"

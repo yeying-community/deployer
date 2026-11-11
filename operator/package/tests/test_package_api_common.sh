@@ -27,10 +27,10 @@ git -C "$fixture" add .
 git -C "$fixture" commit -qm fixture
 commit="$(git -C "$fixture" rev-parse HEAD)"
 mkdir -p "$tmp_dir/output"
-(cd "$fixture" && ./build.sh --ref "$commit" --version 1.2.3 --output-dir "$tmp_dir/output")
+(cd "$fixture" && ./build.sh --ref "$commit" --source-commit "$commit" --version 1.2.3 --output-dir "$tmp_dir/output")
 "$script_dir/package_manifest.sh" "$tmp_dir/output/release-manifest.json" --repository fixture --source-commit "$commit" --version 1.2.3 >/dev/null
 [[ -f "$tmp_dir/output/fixture-service-v1.2.3-${commit:0:7}.tar.gz" ]]
-if (cd "$fixture" && ./build.sh --ref "$commit" --version 1.2.3 --output-dir "$tmp_dir/output") >/dev/null 2>&1; then
+if (cd "$fixture" && ./build.sh --ref "$commit" --source-commit "$commit" --version 1.2.3 --output-dir "$tmp_dir/output") >/dev/null 2>&1; then
   echo 'expected non-empty output directory to be rejected' >&2
   exit 1
 fi
