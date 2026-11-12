@@ -1,0 +1,15 @@
+# 手动执行 compile_packages.sh 时默认打包这里列出的仓库，每行一个仓库名。
+# 本名单只影响手动打包；自动打包由 auto-package.conf 单独配置。
+# 此名单与 upgrade-modules.conf 无关，后者控制 upgrade.sh 升级哪些服务。
+node
+warehouse
+router
+chat
+homepage
+project
+social
+knowledge
+orchestrator
+books
+billing
+wallet

@@ -9,7 +9,7 @@ release_bump="patch"
 publish_requested=0
 release_unit_versions=()
 release_tags=()
-modules_file_override=""
+repositories_file_override=""
 success_state_dir=""
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -25,18 +25,18 @@ while [[ $# -gt 0 ]]; do
             [[ $# -ge 2 ]] || { printf '%s\n' "--tag requires REPOSITORY:vMAJOR.MINOR.PATCH" >&2; exit 2; }
             [[ "$2" =~ ^[a-z0-9]+(-[a-z0-9]+)*:v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || { printf 'Invalid --tag value: %s\n' "$2" >&2; exit 2; }
             release_tags+=("$2"); shift 2 ;;
-        --modules-file)
-            [[ $# -ge 2 ]] || { printf '%s\n' "--modules-file requires a repository list file" >&2; exit 2; }
-            modules_file_override="$2"; shift 2 ;;
+        --repositories-file)
+            [[ $# -ge 2 ]] || { printf '%s\n' "--repositories-file requires a repository list file" >&2; exit 2; }
+            repositories_file_override="$2"; shift 2 ;;
         --success-state-dir)
             [[ $# -ge 2 ]] || { printf '%s\n' "--success-state-dir requires a state directory" >&2; exit 2; }
             success_state_dir="$2"; shift 2 ;;
         --help|-h)
-            printf 'Usage: %s --publish [--bump patch|minor|major] [--tag REPOSITORY:vVERSION] [--unit-version REPOSITORY:UNIT=VERSION ...] [--modules-file FILE] [--success-state-dir DIR]\n' "$0"; exit 0 ;;
-    *) printf 'Unknown option: %s\nUsage: %s --publish [--bump patch|minor|major] [--tag REPOSITORY:vVERSION] [--unit-version REPOSITORY:UNIT=VERSION ...] [--modules-file FILE] [--success-state-dir DIR]\n' "$1" "$0" >&2; exit 2 ;;
+            printf 'Usage: %s --publish [--bump patch|minor|major] [--tag REPOSITORY:vVERSION] [--unit-version REPOSITORY:UNIT=VERSION ...] [--repositories-file FILE] [--success-state-dir DIR]\n' "$0"; exit 0 ;;
+    *) printf 'Unknown option: %s\nUsage: %s --publish [--bump patch|minor|major] [--tag REPOSITORY:vVERSION] [--unit-version REPOSITORY:UNIT=VERSION ...] [--repositories-file FILE] [--success-state-dir DIR]\n' "$1" "$0" >&2; exit 2 ;;
     esac
 done
-[[ "$publish_requested" -eq 1 ]] || { printf '%s\n' 'Usage: compile_packages.sh --publish [--bump patch|minor|major] [--tag REPOSITORY:vVERSION] [--unit-version REPOSITORY:UNIT=VERSION ...] [--modules-file FILE] [--success-state-dir DIR]' >&2; exit 2; }
+[[ "$publish_requested" -eq 1 ]] || { printf '%s\n' 'Usage: compile_packages.sh --publish [--bump patch|minor|major] [--tag REPOSITORY:vVERSION] [--unit-version REPOSITORY:UNIT=VERSION ...] [--repositories-file FILE] [--success-state-dir DIR]' >&2; exit 2; }
 [[ "$release_bump" == patch || "$release_bump" == minor || "$release_bump" == major ]] || { printf 'Invalid bump type: %s (expected patch, minor, or major)\n' "$release_bump" >&2; exit 2; }
 
 set -euo pipefail
@@ -81,7 +81,7 @@ init_log_file "check-code-status.log"
 lock_file="${COMPILE_PACKAGES_LOCK_FILE:-/tmp/operator-compile-packages.lock}"
 lock_notice_file="${COMPILE_PACKAGES_LOCK_NOTICE_FILE:-${lock_file}.notice}"
 lock_notice_interval="${COMPILE_PACKAGES_LOCK_NOTICE_INTERVAL_SECONDS:-300}"
-package_config_file="${modules_file_override:-${script_dir}/package-modules.conf}"
+repository_config_file="${repositories_file_override:-${script_dir}/manual-package.conf}"
 env_file="${script_dir}/.env"
 code_root="/root/code"
 package_root="/opt/package"
@@ -216,9 +216,9 @@ ensure_release_notes_codex() {
 }
 
 usage() {
-    log "Usage: $0 --publish [--bump patch|minor|major] [--tag REPOSITORY:vVERSION] [--unit-version REPOSITORY:UNIT=VERSION ...] [--modules-file FILE] [--success-state-dir DIR]"
+    log "Usage: $0 --publish [--bump patch|minor|major] [--tag REPOSITORY:vVERSION] [--unit-version REPOSITORY:UNIT=VERSION ...] [--repositories-file FILE] [--success-state-dir DIR]"
     log "Without --publish, automatic package build and upload are disabled."
-    log "With --publish, read repositories from ${package_config_file}, then build, validate, and upload their artifacts."
+    log "With --publish, read repositories from ${repository_config_file}, then build, validate, and upload their artifacts."
 }
 
 if [[ -z "${notify_from}" ]]; then
@@ -504,7 +504,7 @@ notify_upload_failure() {
 
 validate_file_verify_config || exit 1
 
-load_modules "$package_config_file" || {
+load_modules "$repository_config_file" || {
     usage
     exit 1
 }
@@ -514,7 +514,7 @@ for unit_override in "${release_unit_versions[@]}"; do
     for configured_module in "${MODULES[@]}"; do
         [[ "$configured_module" == "$override_repo" ]] && configured=1
     done
-    [[ "$configured" -eq 1 ]] || { log "ERROR! --unit-version repository is not listed in package-modules.conf: ${override_repo}"; exit 2; }
+    [[ "$configured" -eq 1 ]] || { log "ERROR! --unit-version repository is not listed in the selected repository list: ${override_repo}"; exit 2; }
 done
 for tag_override in "${release_tags[@]}"; do
     override_repo="${tag_override%%:*}"
@@ -522,7 +522,7 @@ for tag_override in "${release_tags[@]}"; do
     for configured_module in "${MODULES[@]}"; do
         [[ "$configured_module" == "$override_repo" ]] && configured=1
     done
-    [[ "$configured" -eq 1 ]] || { log "ERROR! --tag repository is not listed in package-modules.conf: ${override_repo}"; exit 2; }
+    [[ "$configured" -eq 1 ]] || { log "ERROR! --tag repository is not listed in the selected repository list: ${override_repo}"; exit 2; }
 done
 
 recover_tag_only_commit() {
