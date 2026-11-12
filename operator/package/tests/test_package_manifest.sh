@@ -136,11 +136,14 @@ if "$validator" "$fixture/release-manifest.json" >/dev/null 2>&1; then fail 'ser
 pass 'required service entry rejected when missing'
 
 fixture=$(make_fixture node service-with-assets safe-symlink)
-"$validator" "$fixture/release-manifest.json" --repository node --source-commit "$commit" >/dev/null || fail 'safe package-internal symbolic link rejected'
+if "$validator" "$fixture/release-manifest.json" --repository node --source-commit "$commit" >/dev/null 2>&1; then fail 'retired service-with-assets artifact accepted for a new package'; fi
+"$validator" "$fixture/release-manifest.json" --repository node --source-commit "$commit" --allow-legacy-service-with-assets >/dev/null || fail 'legacy service-with-assets artifact was not accepted for upgrade compatibility'
+pass 'retired artifact type rejected for new releases and accepted only in legacy mode'
+"$validator" "$fixture/release-manifest.json" --repository node --source-commit "$commit" --allow-legacy-service-with-assets >/dev/null || fail 'safe package-internal symbolic link rejected'
 pass 'package-internal relative symbolic link accepted'
 
 fixture=$(make_fixture node service-with-assets unsafe-link)
-if "$validator" "$fixture/release-manifest.json" --repository node >/dev/null 2>&1; then fail 'symbolic link escaping package root accepted'; fi
+if "$validator" "$fixture/release-manifest.json" --repository node --allow-legacy-service-with-assets >/dev/null 2>&1; then fail 'symbolic link escaping package root accepted'; fi
 pass 'symbolic link escaping package root rejected'
 
 fixture=$(make_fixture homepage-api service package-link)
