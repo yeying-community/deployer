@@ -58,8 +58,8 @@ chmod 700 /root/code/deployer/operator/analyer
 chmod 600 analyzer.conf analyzer-modules.conf
 ```
 
-`analyzer.conf` 的 `modules_file` 必须指向 `analyzer-modules.conf`。现有 `modules.conf`
-需改名，并同步更新 `modules_file`；运行时不会再读取旧名称。
+新配置的 `modules_file` 指向 `analyzer-modules.conf`。已有环境可以继续使用 `modules.conf`，
+只要 `analyzer.conf` 指向实际存在的清单即可；不要在未同步修改配置的情况下重命名正在使用的文件。
 
 `analyzer.conf` 是 JSON。主要配置包括：
 
@@ -116,6 +116,8 @@ YEYING_OPS_HOME=/root/.codex/skills/yeying-ops \
 ./run_analyzer.sh --date 2026-10-22 --dry-run
 ```
 
+通过 `run_analyzer.sh --dry-run` 执行时也会跳过飞书日报通知。
+
 ## Cron
 
 `cron.example` 使用 `/etc/crontab` 格式，默认每天 23:00 运行：
@@ -136,6 +138,8 @@ YEYING_OPS_HOME=/root/.codex/skills/yeying-ops \
 - `results/YYYY-MM-DD/summary.json`：机器可读日报。
 - `results/YYYY-MM-DD/summary.md`：人工日报。
 - `work/`：模型调用的临时输出，调用结束后删除。
+
+finding 会附带备选解释、支持和反对证据、只读验证建议，以及带预期结果、风险和回退方式的人工操作计划。计划只供审计人员评估，定时任务不会执行其中的操作。精确首次/末次发生时间不会发送给分析模型；采集器验证结果后才会附加，并可随启用的 Project 审计任务共享。
 
 这些文件以及 `analyzer.conf`、`analyzer-modules.conf` 都不得提交 Git。
 
