@@ -1,3 +1,7 @@
 .env
+manual-package.conf
+auto-package.conf
+# Legacy local config filenames; migrate them before running the new scripts.
+manual-package-repositories.conf
 package-modules.conf
 auto-package-paths.conf

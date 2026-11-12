@@ -37,24 +37,24 @@ for repository in router homepage; do
     publish_repository_refs "$repository"
 done
 
-cat > "$tmp_dir/auto-package-paths.conf" <<'CONFIG'
-router src/
-homepage wallet/
-CONFIG
-cat > "$tmp_dir/package-modules.conf" <<'CONFIG'
-router
-homepage
-CONFIG
+cat > "$tmp_dir/auto-package.conf" <<'CONFIG'
+[router]
+path=src/
 
+[homepage]
+path=wallet/
+CONFIG
+# No manual-package.conf is created or supplied: automatic packaging must
+# select repositories only from auto-package.conf.
 cat > "$tmp_dir/compile-stub.sh" <<'STUB'
 #!/usr/bin/env bash
 set -euo pipefail
 printf '%s\n' "$*" >> "$AUTO_PACKAGE_TEST_CALLS"
-modules_file=""
+repositories_file=""
 state_dir=""
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --modules-file) modules_file=$2; shift 2 ;;
+        --repositories-file) repositories_file=$2; shift 2 ;;
         --success-state-dir) state_dir=$2; shift 2 ;;
         *) shift ;;
     esac
@@ -64,14 +64,13 @@ while IFS= read -r repository; do
     source_commit=$(git -C "$AUTO_PACKAGE_CODE_ROOT/$repository" rev-parse refs/remotes/origin/main)
     printf '%s\n' "$source_commit" > "$state_dir/$repository.source"
     rm -f "$state_dir/$repository.pending"
-done < "$modules_file"
+done < "$repositories_file"
 STUB
 chmod +x "$tmp_dir/compile-stub.sh"
 
 run_auto() {
     PATH="$tmp_dir/bin:$PATH" \
-    AUTO_PACKAGE_CONFIG_FILE="$tmp_dir/auto-package-paths.conf" \
-    AUTO_PACKAGE_PACKAGE_MODULES_FILE="$tmp_dir/package-modules.conf" \
+    AUTO_PACKAGE_CONFIG_FILE="$tmp_dir/auto-package.conf" \
     AUTO_PACKAGE_STATE_DIR="$tmp_dir/state" \
     AUTO_PACKAGE_CODE_ROOT="$tmp_dir/code" \
     AUTO_PACKAGE_COMPILE_SCRIPT="$tmp_dir/compile-stub.sh" \

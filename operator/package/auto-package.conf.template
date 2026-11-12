@@ -1,0 +1,20 @@
+# 自动打包配置按仓库分节；只配置此文件的仓库会参加自动检查和打包。
+# 一个仓库可写多条 path，任意一条路径有变化就触发该仓库打包。
+# 当前支持 path 字段；以后增加其他设置时使用同样的 key=value 格式。
+# 注释必须单独占一行，行尾不支持注释。
+#
+# 示例（以下内容以 # 开头，不会生效）：
+# [router]
+# path=:(glob)internal/**/*.go
+# path=:(top,literal)go.mod
+# path=scripts/
+#
+# [homepage]
+# path=yeying/
+# path=tidukongjian/
+# path=wallet/
+# path=scripts/
+#
+# `.` 匹配仓库中的所有路径；只有每次提交都应该触发打包时才使用。
+# [tester]
+# path=.

@@ -5,11 +5,10 @@ set -eo pipefail
 umask 077
 
 script_dir=$(cd "$(dirname "$0")" || exit 1; pwd)
-config_file="${AUTO_PACKAGE_CONFIG_FILE:-${script_dir}/auto-package-paths.conf}"
+config_file="${AUTO_PACKAGE_CONFIG_FILE:-${script_dir}/auto-package.conf}"
 state_dir="${AUTO_PACKAGE_STATE_DIR:-/var/lib/deployer-auto-package}"
 code_root="${AUTO_PACKAGE_CODE_ROOT:-/root/code}"
 compile_script="${AUTO_PACKAGE_COMPILE_SCRIPT:-${script_dir}/compile_packages.sh}"
-package_modules_file="${AUTO_PACKAGE_PACKAGE_MODULES_FILE:-${script_dir}/package-modules.conf}"
 lock_file="${AUTO_PACKAGE_LOCK_FILE:-/tmp/operator-auto-package.lock}"
 log_file="${AUTO_PACKAGE_LOG_FILE:-/opt/logs/auto-package.log}"
 initialize=0
@@ -107,52 +106,65 @@ if [[ ! -x "$compile_script" ]]; then
     log "ERROR! compile script is missing or not executable: ${compile_script}"
     exit 1
 fi
-if [[ ! -f "$package_modules_file" ]]; then
-    log "ERROR! package module list is missing: ${package_modules_file}"
-    exit 1
-fi
 repositories=()
 pathspec_repositories=()
 pathspec_values=()
-package_repositories=()
-while IFS= read -r package_repository || [[ -n "$package_repository" ]]; do
-    package_repository="${package_repository%%#*}"
-    package_repository="${package_repository%%[[:space:]]*}"
-    [[ -n "$package_repository" ]] && package_repositories+=("$package_repository")
-done < "$package_modules_file"
-while IFS=$' \t' read -r repository pathspec extra || [[ -n "${repository:-}${pathspec:-}${extra:-}" ]]; do
-    [[ -n "${repository:-}" && "$repository" != \#* ]] || continue
-    if [[ ! "$repository" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ || -z "${pathspec:-}" || -n "${extra:-}" ]]; then
-        log "ERROR! invalid allowlist row; expected REPOSITORY PATHSPEC: ${repository:-} ${pathspec:-} ${extra:-}"
+current_repository=""
+current_repository_path_count=0
+while IFS= read -r line || [[ -n "$line" ]]; do
+    line=$(printf '%s' "$line" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+    [[ -n "$line" && "$line" != \#* && "$line" != \;* ]] || continue
+
+    if [[ "$line" =~ ^\[([a-z0-9]+(-[a-z0-9]+)*)\]$ ]]; then
+        if [[ -n "$current_repository" && "$current_repository_path_count" -eq 0 ]]; then
+            log "ERROR! no path entries configured for repository ${current_repository}"
+            exit 2
+        fi
+        current_repository="${BASH_REMATCH[1]}"
+        for existing_repository in "${repositories[@]}"; do
+            if [[ "$existing_repository" == "$current_repository" ]]; then
+                log "ERROR! duplicate repository section in ${config_file}: ${current_repository}"
+                exit 2
+            fi
+        done
+        repositories+=("$current_repository")
+        current_repository_path_count=0
+        continue
+    fi
+
+    if [[ -z "$current_repository" || "$line" != *=* ]]; then
+        log "ERROR! expected [repository] section followed by key=value entries: ${line}"
         exit 2
     fi
-    case "$pathspec" in
+    key="${line%%=*}"
+    value="${line#*=}"
+    key=$(printf '%s' "$key" | sed 's/[[:space:]]*$//')
+    value=$(printf '%s' "$value" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+    if [[ "$key" != "path" ]]; then
+        log "ERROR! unsupported key in ${config_file} for ${current_repository}: ${key} (supported key: path)"
+        exit 2
+    fi
+    if [[ -z "$value" ]]; then
+        log "ERROR! empty path value in ${config_file} for ${current_repository}"
+        exit 2
+    fi
+    case "$value" in
         /*|-*|..|../*|*/..|*/../*|*' '*)
-            log "ERROR! unsafe or unsupported pathspec for ${repository}: ${pathspec}"
+            log "ERROR! unsafe or unsupported pathspec for ${current_repository}: ${value}"
             exit 2
             ;;
     esac
-    package_repository_configured=0
-    for package_repository in "${package_repositories[@]}"; do
-        [[ "$package_repository" == "$repository" ]] && package_repository_configured=1
-    done
-    if [[ "$package_repository_configured" -ne 1 ]]; then
-        log "ERROR! automatic repository is missing from package-modules.conf: ${repository}"
-        exit 2
-    fi
-    found_repository=0
-    for existing_repository in "${repositories[@]}"; do
-        [[ "$existing_repository" == "$repository" ]] && found_repository=1
-    done
-    if [[ "$found_repository" -eq 0 ]]; then
-        repositories+=("$repository")
-    fi
-    pathspec_repositories+=("$repository")
-    pathspec_values+=("$pathspec")
+    pathspec_repositories+=("$current_repository")
+    pathspec_values+=("$value")
+    current_repository_path_count=$((current_repository_path_count + 1))
 done < "$config_file"
+if [[ -n "$current_repository" && "$current_repository_path_count" -eq 0 ]]; then
+    log "ERROR! no path entries configured for repository ${current_repository}"
+    exit 2
+fi
 
 if [[ ${#repositories[@]} -eq 0 ]]; then
-    log "ERROR! automatic package allowlist is empty: ${config_file}"
+    log "ERROR! automatic package config has no repository sections: ${config_file}"
     exit 1
 fi
 if [[ -n "$initialize_repository" ]]; then
@@ -318,10 +330,10 @@ if [[ "$check_only" -eq 1 ]]; then
     exit 0
 fi
 
-temporary_modules=$(mktemp "${TMPDIR:-/tmp}/auto-package-modules.XXXXXX")
-trap 'rm -f "$temporary_modules"' EXIT
-printf '%s\n' "${selected_repositories[@]}" > "$temporary_modules"
-compile_args=(--publish --modules-file "$temporary_modules" --success-state-dir "$state_dir")
+temporary_repositories=$(mktemp "${TMPDIR:-/tmp}/auto-package-repositories.XXXXXX")
+trap 'rm -f "$temporary_repositories"' EXIT
+printf '%s\n' "${selected_repositories[@]}" > "$temporary_repositories"
+compile_args=(--publish --repositories-file "$temporary_repositories" --success-state-dir "$state_dir")
 for tag_override in "${selected_tags[@]}"; do
     [[ -n "$tag_override" ]] && compile_args+=(--tag "$tag_override")
 done
