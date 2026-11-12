@@ -621,7 +621,7 @@ for module_name in "${MODULES[@]}"; do
 
     remote_candidates=()
     for remote_name in "${remote_files[@]}"; do
-        if [[ "$remote_name" == "${module_name}-"*.tar.gz ]]; then
+        if [[ "$remote_name" == "${module_name}-v"*.tar.gz ]]; then
             remote_candidates+=("$remote_name")
         fi
     done
