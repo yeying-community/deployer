@@ -524,7 +524,7 @@ upgrade_static_units() {
             overall_status=1
             continue
         fi
-        if ! "${script_dir}/../package/package_manifest.sh" "$manifest_file" --repository "$repository" --source-commit "$source_commit" >> "$LOGFILE" 2>&1; then
+        if ! "${script_dir}/../package/package_manifest.sh" "$manifest_file" --repository "$repository" --source-commit "$source_commit" --allow-legacy-service-with-assets >> "$LOGFILE" 2>&1; then
             log "ERROR! static release manifest or artifact validation failed: ${manifest_name}"
             overall_status=1
             continue

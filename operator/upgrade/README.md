@@ -28,7 +28,6 @@ chmod 600 .env
 - `HEALTH_CHECK_INITIAL_WAIT_SECONDS`：启动后第一次健康检查前等待的秒数，默认 `0`。
 - `WAIT_SECONDS`、`RETRY_TIMES`：健康检查失败后的重试间隔和次数，默认 `2` 秒和 `10` 次。
 - `FILE_VERIFY`：可选 `sha256sum` 或 `md5sum`；为空时不使用 sidecar 校验文件。
-- `WEBDAV_FLAG`：仅影响 warehouse，可选 `all`、`backend`、`frontend`。
 - `NOTIFY_DINGDING`、`NOTIFY_FEISHU`、`NOTIFY_SAME_VERSION`：通知开关。
 
 升级节点必须能访问 WebDAV，并能读写 `/opt/package`、`/opt/deploy`、`/opt/logs` 及服务启停所需资源。目标模块必须已部署；本入口不负责首次安装。
@@ -88,13 +87,13 @@ bash scripts/upgrade.sh <prepare|copy-config|post-copy|finalize> <current-dir> <
 - `node`：在 `copy-config` 迁移 `config.js` 和加密 secrets vault，但不复制 `secrets.passwordFile`。如果目标环境没有有效密码文件，目标 `starter.sh` 会在当前终端安全提示输入密码；密码不会回显，也不会写入升级日志。无人值守升级必须由 node 自身提供安全的非交互凭据来源。
 - `billing`：在 `copy-config` 复制 `config.yaml`。
 - `social`：在 `copy-config` 复制 `config/`，在 `post-copy` 发布 `web/dist` 并重启 Nginx。
-- `warehouse`：在 `copy-config` 复制 `config.yaml`；`all` 同时执行后端通用升级和前端发布，`backend` 只升级后端，`frontend` 只发布前端并通过退出码 `10` 跳过后端服务切换。
+- `warehouse`：在 `copy-config` 复制 `config.yaml`。WebDAV 前端是独立 `warehouse-web` 静态单元，由 `static-units.conf` 控制，与 warehouse 后端服务互不影响。
 
 ## 回退和验证
 
 服务升级失败后先查看日志、当前软链接和进程状态，再决定重试或手动回退；服务模块不会自动降级。若失败发生在新服务启动之后、软链接更新之前，实际运行目录可能已经是目标版本，而 `/opt/deploy/<module>` 仍指向旧目录。静态站点在 HTTP 检查失败时会自动恢复之前的 `current` 指向。
 
-升级后检查 `/opt/logs/upgrade.log`、进程、端口和核心功能。静态站点还应确认 `readlink -f /opt/deploy/static/<site_id>/current` 指向目标版本，并通过 `static-units.conf` 中的健康 URL 检查入口。warehouse 旧 hook 仍需确认 `/usr/share/nginx/html/webdav` 内容已更新且 Nginx 重启成功。
+升级后检查 `/opt/logs/upgrade.log`、进程、端口和核心功能。静态站点还应确认 `readlink -f /opt/deploy/static/<site_id>/current` 指向目标版本，并通过 `static-units.conf` 中的健康 URL 检查入口。warehouse WebDAV 前端迁移到标准静态目录后，也通过此流程部署；迁移前不要启用 warehouse 的静态配置行。
 
 升级目标配置和静态部署回归测试：
 

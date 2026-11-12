@@ -24,6 +24,7 @@ expected_source_commit=
 expected_version=
 packages_only=0
 artifacts_tsv=0
+allow_legacy_service_with_assets=0
 while [ "$#" -gt 0 ]; do
     case "$1" in
         -h|--help) usage; exit 0 ;;
@@ -39,6 +40,7 @@ while [ "$#" -gt 0 ]; do
             ;;
         --packages-only) packages_only=1 ;;
         --artifacts-tsv) artifacts_tsv=1 ;;
+        --allow-legacy-service-with-assets) allow_legacy_service_with_assets=1 ;;
         --) shift; [ "$#" -eq 1 ] || fail 'expected one manifest path'; manifest=$1; break ;;
         -*) fail "unknown option: $1" ;;
         *) [ -z "$manifest" ] || fail 'only one manifest path is allowed'; manifest=$1 ;;
@@ -60,7 +62,7 @@ output_dir=$(CDPATH= cd -P "$manifest_dir" 2>/dev/null && pwd -P) || fail "canno
 
 jq -e 'type == "object"' "$manifest" >/dev/null 2>&1 || fail 'manifest root must be an object'
 jq -e '.schema_version | type == "number" and tojson == "1"' "$manifest" >/dev/null 2>&1 || fail 'schema_version must be 1'
-if ! jq -e --arg unit "$UNIT_RE" --arg ver "$VERSION_RE" --arg commit "$COMMIT_RE" --arg sha "$SHA_RE" '
+if ! jq -e --arg unit "$UNIT_RE" --arg ver "$VERSION_RE" --arg commit "$COMMIT_RE" --arg sha "$SHA_RE" --arg allow_legacy "$allow_legacy_service_with_assets" '
     (.repository | type == "string" and test($unit)) and
     (.source_commit | type == "string" and test($commit)) and
     (.artifacts | type == "array" and length > 0) and
@@ -68,7 +70,7 @@ if ! jq -e --arg unit "$UNIT_RE" --arg ver "$VERSION_RE" --arg commit "$COMMIT_R
         . as $a |
         ($a | type == "object") and
         ($a.unit_id | type == "string" and test($unit)) and
-        ($a.type | type == "string" and (["service", "service-with-assets", "static", "desktop"] | index($a.type) != null)) and
+        ($a.type | type == "string" and ((["service", "static", "desktop"] | index($a.type) != null) or ($allow_legacy == "1" and $a.type == "service-with-assets"))) and
         ($a.version | type == "string" and test($ver)) and
         ($a.package | type == "string" and ((if $a.type == "desktop" then endswith(".zip") else endswith(".tar.gz") end)) and (contains("/") | not) and (contains("\\") | not)) and
         ($a.sha256 | type == "string" and test($sha)) and
@@ -191,9 +193,15 @@ while [ "$index" -lt "$artifact_count" ]; do
         case "$link_target" in ''|/*|*'\'*|..|../*|*/../*|*/..) fail "archive contains an unsafe hard-link target: $link_target" ;; esac
     done < "$archive_verbose"
     case "$artifact_type" in
-        service|service-with-assets)
+        service)
             for required in "$package_root/scripts/starter.sh" "$package_root/scripts/health-check.sh" "$package_root/scripts/test.sh"; do
                 archive_has_entry "$required" || fail "$package_name is missing required service file: $required"
+            done
+            ;;
+        service-with-assets)
+            [ "$allow_legacy_service_with_assets" -eq 1 ] || fail 'service-with-assets is retired; split the artifact into service and static units'
+            for required in "$package_root/scripts/starter.sh" "$package_root/scripts/health-check.sh" "$package_root/scripts/test.sh"; do
+                archive_has_entry "$required" || fail "$package_name is missing required legacy service file: $required"
             done
             ;;
         static)
