@@ -10,6 +10,7 @@ LOGFILE="$tmp_dir/test.log"
 log() { printf '%s\n' "$*"; }
 eval "$(sed -n '/^sync_main_latest() {/,/^}/p' "$script_dir/compile_packages.sh")"
 eval "$(sed -n '/^recover_tag_only_commit() {/,/^}/p' "$script_dir/compile_packages.sh")"
+eval "$(sed -n '/^latest_release_source() {/,/^}/p' "$script_dir/compile_packages.sh")"
 
 git init --bare --initial-branch=main "$tmp_dir/origin.git" >/dev/null
 git clone "$tmp_dir/origin.git" "$tmp_dir/router" >/dev/null 2>&1
@@ -68,6 +69,8 @@ printf '{"version":"1.0.1"}\n' > "$tmp_dir/router/version.json"
 git -C "$tmp_dir/router" commit -am release-version >/dev/null
 git -C "$tmp_dir/router" tag -a v1.0.1 -m release >/dev/null
 release_commit="$(git -C "$tmp_dir/router" rev-parse HEAD)"
+release_source="$(git -C "$tmp_dir/router" rev-parse HEAD^)"
+[[ "$(latest_release_source "$tmp_dir/router")" == "v1.0.1 $release_source" ]]
 git -C "$tmp_dir/publisher" fetch origin main >/dev/null 2>&1
 git -C "$tmp_dir/publisher" reset --hard origin/main >/dev/null
 printf 'merged PR change\n' > "$tmp_dir/publisher/merged.txt"
