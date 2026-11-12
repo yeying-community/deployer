@@ -114,6 +114,29 @@ sha256_file() {
     fi
 }
 archive_has_entry() { awk -v wanted="$1" '$0 == wanted { found=1 } END { exit !found }' "$archive_list"; }
+archive_symlink_stays_in_package() {
+    member=$1
+    target=$2
+    member_dir=${member%/*}
+    [ "$member_dir" != "$member" ] || member_dir=.
+    case "$target" in ''|/*|*'\'* ) return 1 ;; esac
+    printf '%s\n' "$member_dir/$target" | awk -F/ -v root="$package_root" '
+        {
+            depth = 0
+            for (i = 1; i <= NF; i++) {
+                if ($i == "" || $i == ".") continue
+                if ($i == "..") {
+                    if (depth <= 1) exit 1
+                    depth--
+                    continue
+                }
+                if (depth == 0 && $i != root) exit 1
+                depth++
+            }
+            if (depth < 1) exit 1
+        }
+    '
+}
 
 index=0
 while [ "$index" -lt "$artifact_count" ]; do
@@ -151,11 +174,21 @@ while [ "$index" -lt "$artifact_count" ]; do
     else tar -tvzf "$package_path" >"$archive_verbose" 2>/dev/null || fail "cannot inspect archive $package_name"; fi
     while IFS= read -r listing || [ -n "$listing" ]; do
         case "$listing" in
-            l*' -> '*) link_target=${listing##* -> } ;;
-            *' link to '*) link_target=${listing##* link to } ;;
+            l*' -> '*)
+                link_target=${listing##* -> }
+                link_member=${listing% -> *}
+                link_member=${link_member##* }
+                archive_symlink_stays_in_package "$link_member" "$link_target" || fail "archive contains a symbolic link that escapes package_root $package_root: $link_member -> $link_target"
+                continue
+                ;;
+            *' link to '*)
+                link_target=${listing##* link to }
+                link_member=${listing% link to *}
+                link_member=${link_member##* }
+                ;;
             *) continue ;;
         esac
-        case "$link_target" in ''|/*|..|../*|*/../*|*/..) fail "archive contains an unsafe link target: $link_target" ;; esac
+        case "$link_target" in ''|/*|*'\'*|..|../*|*/../*|*/..) fail "archive contains an unsafe hard-link target: $link_target" ;; esac
     done < "$archive_verbose"
     case "$artifact_type" in
         service|service-with-assets)

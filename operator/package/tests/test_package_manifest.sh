@@ -21,11 +21,17 @@ make_fixture() {
     root="${unit}-v${version}-${commit%${commit#???????}}"
     fixture="$tmp_dir/$mode"
     mkdir -p "$fixture/staging/$root/scripts"
-    if [ "$type" = service ]; then
+    case "$type" in service|service-with-assets) is_service=1 ;; *) is_service=0 ;; esac
+    if [ "$is_service" -eq 1 ]; then
         for name in starter.sh health-check.sh test.sh; do
             [ "$mode" != missing-entry ] || [ "$name" != starter.sh ] || continue
             printf '#!/bin/sh\nexit 0\n' > "$fixture/staging/$root/scripts/$name"
         done
+        if [ "$mode" = safe-symlink ]; then
+            mkdir -p "$fixture/staging/$root/node_modules/.bin" "$fixture/staging/$root/node_modules/typescript/bin"
+            printf '#!/bin/sh\nexit 0\n' > "$fixture/staging/$root/node_modules/typescript/bin/tsc"
+            ln -s ../typescript/bin/tsc "$fixture/staging/$root/node_modules/.bin/tsc"
+        fi
     else
         printf '<html>ok</html>\n' > "$fixture/staging/$root/index.html"
     fi
@@ -36,12 +42,13 @@ make_fixture() {
         tar -czf "$fixture/$root.tar.gz" -C "$fixture/staging" "$root"
     fi
     digest=$(sha256_file "$fixture/$root.tar.gz")
-    if [ "$type" = service ]; then
+    repository=${unit%%-*}
+    if [ "$is_service" -eq 1 ]; then
         targets=null
     else
         targets='[{"site_id":"main","path":"/opt/deploy/static/main","health_check_path":"/index.html"}]'
     fi
-    jq -n --arg commit "$commit" --arg version "$version" --arg unit "$unit" --arg type "$type" --arg root "$root" --arg package "$root.tar.gz" --arg sha "$digest" --argjson targets "$targets" '{schema_version:1,repository:"homepage",source_commit:$commit,artifacts:[{unit_id:$unit,type:$type,version:$version,package:$package,sha256:$sha,package_root:$root} + (if $type == "static" then {static_targets:$targets} else {} end)]}' > "$fixture/release-manifest.json"
+    jq -n --arg repository "$repository" --arg commit "$commit" --arg version "$version" --arg unit "$unit" --arg type "$type" --arg root "$root" --arg package "$root.tar.gz" --arg sha "$digest" --argjson targets "$targets" '{schema_version:1,repository:$repository,source_commit:$commit,artifacts:[{unit_id:$unit,type:$type,version:$version,package:$package,sha256:$sha,package_root:$root} + (if $type == "static" then {static_targets:$targets} else {} end)]}' > "$fixture/release-manifest.json"
     printf '%s\n' "$fixture"
 }
 
@@ -127,6 +134,14 @@ pass 'schema field types rejected'
 fixture=$(make_fixture homepage-api service missing-entry)
 if "$validator" "$fixture/release-manifest.json" >/dev/null 2>&1; then fail 'service package without starter accepted'; fi
 pass 'required service entry rejected when missing'
+
+fixture=$(make_fixture node service-with-assets safe-symlink)
+"$validator" "$fixture/release-manifest.json" --repository node --source-commit "$commit" >/dev/null || fail 'safe package-internal symbolic link rejected'
+pass 'package-internal relative symbolic link accepted'
+
+fixture=$(make_fixture node service-with-assets unsafe-link)
+if "$validator" "$fixture/release-manifest.json" --repository node >/dev/null 2>&1; then fail 'symbolic link escaping package root accepted'; fi
+pass 'symbolic link escaping package root rejected'
 
 fixture=$(make_fixture homepage-api service package-link)
 package_name="homepage-api-v${version}-0123456.tar.gz"
