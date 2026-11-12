@@ -231,7 +231,7 @@ artifact_info_from_name() {
     prefix=${rest%-${version_tag}}
     prefix=${prefix%-}
 
-    if [[ -z "$prefix" || "$prefix" != "${module_name}"* ]]; then
+    if [[ "$prefix" != "$module_name" ]]; then
         return 1
     fi
     if [[ ! "$version_tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
