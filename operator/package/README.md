@@ -79,7 +79,7 @@ cd /root/code/deployer/operator/package
 ./compile_packages.sh --publish
 ```
 
-默认从仓库最大语义版本递增 patch。需要递增 minor 或 major 时传入 `--bump minor` 或 `--bump major`。版本文件变更只存在于 tag 指向的 release commit，不推送到社区 `main`；tag 父提交为打包时最新的 `main` commit，制品名和 manifest 使用该 `main` commit 的短哈希。单个 artifact 可通过 `--unit-version REPOSITORY:UNIT=VERSION` 覆盖版本。
+默认从仓库最大语义版本递增 patch。需要递增 minor 或 major 时传入 `--bump minor` 或 `--bump major`。版本文件变更只存在于 tag 指向的 release commit，不推送到社区 `main`；tag 记录打包时的 `main` 源码提交，制品名和 manifest 使用该 `main` commit 的短哈希。脚本会比较 `origin/main` 与最新 release tag 记录的源码提交：相同则跳过，不创建新 tag、不构建也不上传。需要重新生成已有版本的制品时，显式传入 `--tag REPOSITORY:vVERSION` 可重建该 tag。单个 artifact 可通过 `--unit-version REPOSITORY:UNIT=VERSION` 覆盖版本。
 
 tag 创建后若构建、校验或上传失败，重试时复用同一 tag，例如：
 

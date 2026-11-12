@@ -605,6 +605,28 @@ sync_main_latest() {
     return 0
 }
 
+latest_release_source() {
+    local module_dir=$1
+    local latest_tag tag_commit source_commit
+
+    latest_tag=$(git -C "$module_dir" tag --list 'v[0-9]*.[0-9]*.[0-9]*' \
+        | grep -E '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$' \
+        | sort -V | tail -n 1 || true)
+    [[ -n "$latest_tag" ]] || return 1
+
+    tag_commit=$(git -C "$module_dir" rev-parse "${latest_tag}^{commit}" 2>/dev/null || true)
+    [[ -n "$tag_commit" ]] || return 1
+    source_commit=$(git -C "$module_dir" for-each-ref --format='%(contents:body)' \
+        "refs/tags/${latest_tag}" | sed -n 's/^Source-Commit: //p' | head -n 1)
+    if [[ -z "$source_commit" ]]; then
+        # Legacy release tags point to a version-only commit whose parent is
+        # the source commit used to build the release.
+        source_commit=$(git -C "$module_dir" rev-parse "${tag_commit}^" 2>/dev/null || true)
+    fi
+    [[ "$source_commit" =~ ^[0-9a-f]{40}$ ]] || return 1
+    printf '%s %s\n' "$latest_tag" "$source_commit"
+}
+
 parse_package_name() {
     local module_name=$1
     local package_name=$2
@@ -758,6 +780,21 @@ for module_name in "${MODULES[@]}"; do
     for tag_override in "${release_tags[@]}"; do
         [[ "${tag_override%%:*}" == "$module_name" ]] && selected_tag="${tag_override#*:}"
     done
+    if [[ -z "$selected_tag" ]]; then
+        current_source=$(git -C "$module_dir" rev-parse refs/remotes/origin/main)
+        release_state=$(latest_release_source "$module_dir" || true)
+        if [[ -n "$release_state" ]]; then
+            read -r previous_release_tag previous_release_source <<< "$release_state"
+            if [[ "$previous_release_source" == "$current_source" ]]; then
+                log "skip ${module_name}: origin/main ${current_source:0:7} already has published release ${previous_release_tag}"
+                if [[ -n "$success_state_dir" ]] && ! write_auto_success_state "$success_state_dir" "$module_name" "$current_source"; then
+                    log "ERROR! unable to update automatic release checkpoint for skipped ${module_name}"
+                    overall_status=1
+                fi
+                continue
+            fi
+        fi
+    fi
     if [[ -n "$selected_tag" ]]; then
         if ! git -C "$module_dir" fetch origin "refs/tags/${selected_tag}:refs/tags/${selected_tag}" >> "$LOGFILE" 2>&1; then
             log "ERROR! requested release tag does not exist on origin: ${selected_tag}"
