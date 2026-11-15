@@ -387,7 +387,7 @@ find_current_version_from_deploy_dirs() {
     if [[ -L "$link_path" ]]; then
         resolved_path=$(readlink -f "$link_path" 2>/dev/null || true)
         resolved_name=$(basename "${resolved_path:-}")
-        if [[ -n "$resolved_name" ]] && artifact_info_from_name "$module_name" "$resolved_name"; then
+        if [[ -n "$resolved_name" ]] && service_artifact_info_from_name "$module_name" "$resolved_name"; then
             SELECTED_NAME="$resolved_name"
             SELECTED_VERSION="$PACKAGE_VERSION"
             SELECTED_COMMIT="$PACKAGE_COMMIT"
@@ -398,7 +398,7 @@ find_current_version_from_deploy_dirs() {
     fi
 
     for dir in "${deploy_root}/${module_name}-"*; do
-        if [[ -d "$dir" ]] && artifact_info_from_name "$module_name" "$(basename "$dir")"; then
+        if [[ -d "$dir" ]] && service_artifact_info_from_name "$module_name" "$(basename "$dir")"; then
             candidate_dirs+=("$(basename "$dir")")
         fi
     done
@@ -407,7 +407,7 @@ find_current_version_from_deploy_dirs() {
         return 1
     fi
 
-    select_latest_by_fixed_short_commit "$module_name" "${candidate_dirs[@]}"
+    select_latest_service_named_item "$module_name" "${candidate_dirs[@]}"
 }
 
 resolve_webdav_dir_url_from_env() {
@@ -496,7 +496,7 @@ upgrade_static_units() {
             overall_status=1
             continue
         fi
-        if ! jq -e --arg unit "$unit_id" --arg site "$site_id" '[.artifacts[] | select(.unit_id == $unit and .type == "static" and any(.static_targets[]; .site_id == $site and .path == ("/opt/deploy/static/" + $site)))] | length == 1' "$manifest_file" >/dev/null 2>&1; then
+        if ! jq -e --arg unit "$unit_id" --arg web_unit "${unit_id}-web" --arg site "$site_id" '[.artifacts[] | select((.unit_id == $unit or .unit_id == $web_unit) and .type == "static" and any(.static_targets[]; .site_id == $site and .path == ("/opt/deploy/static/" + $site)))] | length == 1' "$manifest_file" >/dev/null 2>&1; then
             log "ERROR! ${manifest_name} does not contain the configured static unit/site: ${unit_id}/${site_id}"
             overall_status=1
             continue
@@ -529,13 +529,16 @@ upgrade_static_units() {
             overall_status=1
             continue
         fi
-        artifact_json="$(jq -c --arg unit "$unit_id" --arg site "$site_id" '[.artifacts[] | select(.unit_id == $unit and .type == "static" and any(.static_targets[]; .site_id == $site))][0]' "$manifest_file")"
+        artifact_json="$(jq -c --arg unit "$unit_id" --arg web_unit "${unit_id}-web" --arg site "$site_id" '[.artifacts[] | select((.unit_id == $unit or .unit_id == $web_unit) and .type == "static" and any(.static_targets[]; .site_id == $site))][0]' "$manifest_file")"
+        actual_unit_id="$(jq -r '.unit_id' <<< "$artifact_json")"
+        legacy_static_unit="$actual_unit_id"
+        if [[ "$legacy_static_unit" == *-web ]]; then legacy_static_unit="${legacy_static_unit%-web}"; fi
         package_name="$(jq -r '.package' <<< "$artifact_json")"
         target_version="$(jq -r '.version' <<< "$artifact_json")"
         target_root="$(jq -r '.package_root' <<< "$artifact_json")"
         target_site_path="$(jq -r --arg site "$site_id" '.static_targets[] | select(.site_id == $site) | .path' <<< "$artifact_json")"
         target_health_path="$(jq -r --arg site "$site_id" '.static_targets[] | select(.site_id == $site) | .health_check_path' <<< "$artifact_json")"
-        if [[ "$target_site_path" != "/opt/deploy/static/${site_id}" ]] || ! artifact_info_from_name "$unit_id" "$target_root" || [[ "$PACKAGE_VERSION" != "$target_version" ]]; then
+        if [[ "$target_site_path" != "/opt/deploy/static/${site_id}" ]] || ! artifact_info_from_name "$actual_unit_id" "$target_root" || [[ "$PACKAGE_VERSION" != "$target_version" ]]; then
             log "ERROR! static artifact identity or destination is invalid for ${unit_id}"
             overall_status=1
             continue
@@ -552,7 +555,7 @@ upgrade_static_units() {
                 continue
             fi
             current_root="${current_target#releases/}"
-            if ! artifact_info_from_name "$unit_id" "$current_root"; then
+            if ! artifact_info_from_name "$actual_unit_id" "$current_root" && ! artifact_info_from_name "$legacy_static_unit" "$current_root" && ! artifact_info_from_name "$unit_id" "$current_root"; then
                 log "ERROR! current static package name is invalid for ${unit_id}: ${current_root}"
                 overall_status=1
                 continue
@@ -569,7 +572,7 @@ upgrade_static_units() {
         fi
 
         package_file="${package_root}/${package_name}"
-        if ! "${script_dir}/deploy_static_artifact.sh" "$package_file" "$unit_id" "$site_id" "$target_root" "$target_health_path" "$health_base_url" >> "$LOGFILE" 2>&1; then
+        if ! "${script_dir}/deploy_static_artifact.sh" "$package_file" "$actual_unit_id" "$site_id" "$target_root" "$target_health_path" "$health_base_url" >> "$LOGFILE" 2>&1; then
             log "ERROR! static deployment failed and previous current link was restored when available: ${site_id}"
             overall_status=1
             continue
@@ -620,8 +623,9 @@ for module_name in "${MODULES[@]}"; do
     log "\nhandle module [${module_name}]"
 
     remote_candidates=()
+    service_unit="${module_name}-service"
     for remote_name in "${remote_files[@]}"; do
-        if [[ "$remote_name" == "${module_name}-v"*.tar.gz ]]; then
+        if [[ "$remote_name" == "${service_unit}-v"*.tar.gz || "$remote_name" == "${module_name}-v"*.tar.gz || ( "$module_name" == chat && "$remote_name" == chat-standalone-v*.tar.gz ) ]]; then
             remote_candidates+=("$remote_name")
         fi
     done
@@ -647,7 +651,7 @@ for module_name in "${MODULES[@]}"; do
         continue
     fi
 
-    if ! select_latest_by_fixed_short_commit "$module_name" "${remote_candidates[@]}"; then
+    if ! select_latest_service_named_item "$module_name" "${remote_candidates[@]}"; then
         log "ERROR! failed to parse remote package version for ${module_name}"
         notify_alert "$(format_error_notice \
             "${module_name}/${notify_type}" \

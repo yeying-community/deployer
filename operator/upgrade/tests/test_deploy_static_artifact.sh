@@ -30,11 +30,11 @@ run_deploy() {
   STATIC_TEST_SITE_ID=homepage-yeying \
   STATIC_TEST_EXPECTED_RELEASE="$root" \
   PATH="$tmp_dir/bin:$PATH" \
-    "$script_dir/deploy_static_artifact.sh" "$archive" homepage-yeying homepage-yeying "$root" /index.html https://example.test
+    "$script_dir/deploy_static_artifact.sh" "$archive" homepage-yeying-web homepage-yeying "$root" /index.html https://example.test
 }
 
-old_root=homepage-yeying-v1.0.0-1111111
-new_root=homepage-yeying-v1.1.0-2222222
+old_root=homepage-yeying-web-v1.0.0-1111111
+new_root=homepage-yeying-web-v1.1.0-2222222
 make_archive "$old_root" old
 run_deploy "$tmp_dir/$old_root.tar.gz" "$old_root"
 [[ "$(readlink "$tmp_dir/deploy/homepage-yeying/current")" == "releases/$old_root" ]]
@@ -46,7 +46,7 @@ if STATIC_DEPLOY_TEST_MODE=1 \
   STATIC_TEST_EXPECTED_RELEASE="$new_root" \
   STATIC_TEST_CURL_FAIL=1 \
   PATH="$tmp_dir/bin:$PATH" \
-    "$script_dir/deploy_static_artifact.sh" "$tmp_dir/$new_root.tar.gz" homepage-yeying homepage-yeying "$new_root" /index.html https://example.test; then
+    "$script_dir/deploy_static_artifact.sh" "$tmp_dir/$new_root.tar.gz" homepage-yeying-web homepage-yeying "$new_root" /index.html https://example.test; then
   echo 'expected failed HTTP check to reject deployment' >&2
   exit 1
 fi
@@ -71,12 +71,12 @@ fi
 if STATIC_DEPLOY_TEST_MODE=1 \
   STATIC_DEPLOY_TEST_BASE="$tmp_dir/invalid-path" \
   PATH="$tmp_dir/bin:$PATH" \
-    "$script_dir/deploy_static_artifact.sh" "$tmp_dir/$new_root.tar.gz" homepage-yeying homepage-yeying "$new_root" /bad/../path https://example.test >/dev/null 2>&1; then
+    "$script_dir/deploy_static_artifact.sh" "$tmp_dir/$new_root.tar.gz" homepage-yeying-web homepage-yeying "$new_root" /bad/../path https://example.test >/dev/null 2>&1; then
   echo 'expected unsafe health path to be rejected' >&2
   exit 1
 fi
 
-if "$script_dir/deploy_static_artifact.sh" "$tmp_dir/$new_root.tar.gz" homepage-yeying homepage-yeying-v "$new_root" /index.html https://example.test >/dev/null 2>&1; then
+if "$script_dir/deploy_static_artifact.sh" "$tmp_dir/$new_root.tar.gz" homepage-yeying-web BadSite "$new_root" /index.html https://example.test >/dev/null 2>&1; then
   echo 'expected invalid site ID to be rejected' >&2
   exit 1
 fi

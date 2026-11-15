@@ -25,6 +25,7 @@ expected_version=
 packages_only=0
 artifacts_tsv=0
 allow_legacy_service_with_assets=0
+allow_legacy_unit_names=0
 while [ "$#" -gt 0 ]; do
     case "$1" in
         -h|--help) usage; exit 0 ;;
@@ -41,6 +42,7 @@ while [ "$#" -gt 0 ]; do
         --packages-only) packages_only=1 ;;
         --artifacts-tsv) artifacts_tsv=1 ;;
         --allow-legacy-service-with-assets) allow_legacy_service_with_assets=1 ;;
+        --allow-legacy-unit-names) allow_legacy_unit_names=1 ;;
         --) shift; [ "$#" -eq 1 ] || fail 'expected one manifest path'; manifest=$1; break ;;
         -*) fail "unknown option: $1" ;;
         *) [ -z "$manifest" ] || fail 'only one manifest path is allowed'; manifest=$1 ;;
@@ -62,7 +64,7 @@ output_dir=$(CDPATH= cd -P "$manifest_dir" 2>/dev/null && pwd -P) || fail "canno
 
 jq -e 'type == "object"' "$manifest" >/dev/null 2>&1 || fail 'manifest root must be an object'
 jq -e '.schema_version | type == "number" and tojson == "1"' "$manifest" >/dev/null 2>&1 || fail 'schema_version must be 1'
-if ! jq -e --arg unit "$UNIT_RE" --arg ver "$VERSION_RE" --arg commit "$COMMIT_RE" --arg sha "$SHA_RE" --arg allow_legacy "$allow_legacy_service_with_assets" '
+if ! jq -e --arg unit "$UNIT_RE" --arg ver "$VERSION_RE" --arg commit "$COMMIT_RE" --arg sha "$SHA_RE" --arg allow_legacy "$allow_legacy_service_with_assets" --arg allow_legacy_units "$allow_legacy_unit_names" '
     (.repository | type == "string" and test($unit)) and
     (.source_commit | type == "string" and test($commit)) and
     (.artifacts | type == "array" and length > 0) and
@@ -75,6 +77,14 @@ if ! jq -e --arg unit "$UNIT_RE" --arg ver "$VERSION_RE" --arg commit "$COMMIT_R
         ($a.package | type == "string" and ((if $a.type == "desktop" then endswith(".zip") else endswith(".tar.gz") end)) and (contains("/") | not) and (contains("\\") | not)) and
         ($a.sha256 | type == "string" and test($sha)) and
         ($a.package_root | type == "string" and length > 0 and (contains("/") | not) and (contains("\\") | not)) and
+        (if $a.type == "service" then
+            (($allow_legacy_units == "1" and ($a.unit_id | endswith("-service") | not)) or ($a.unit_id | endswith("-service"))) and
+            (($allow_legacy_units == "1" and ($a.service_target == null)) or
+                ($a.service_target | type == "object" and (.module | type == "string" and test($unit)) and (.path | type == "string" and . == ("/opt/deploy/" + $a.service_target.module))))
+        elif $a.type == "static" then
+            (($allow_legacy_units == "1" and ($a.unit_id | endswith("-web") | not)) or ($a.unit_id | endswith("-web")))
+        elif $a.type == "desktop" then ($a.unit_id | endswith("-desktop"))
+        else true end) and
         (if $a.type == "static" then
             ($a.static_targets | type == "array" and length > 0) and
             ([$a.static_targets[].site_id] | unique | length == ($a.static_targets | length)) and

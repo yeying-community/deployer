@@ -92,8 +92,8 @@ tag 创建后若构建、校验或上传失败，重试时复用同一 tag，例
 手动传输单个制品时，第二个参数必须只是文件名，不能包含目录：
 
 ```bash
-./transfer_packages.sh upload router-v1.2.3-a1b2c3d.tar.gz
-./transfer_packages.sh download router-v1.2.3-a1b2c3d.tar.gz
+./transfer_packages.sh upload router-service-v1.2.3-a1b2c3d.tar.gz
+./transfer_packages.sh download router-service-v1.2.3-a1b2c3d.tar.gz
 ```
 
 ## 定时自动打包

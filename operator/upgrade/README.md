@@ -6,6 +6,8 @@
 
 静态站点统一部署到 `/opt/deploy/static/<site_id>`，Web 服务器 root 指向 `current`，版本包保存在 `releases/`。启用站点前，先将 vhost root 迁移至标准 `current` 目录；warehouse 的 `/usr/share/nginx/html/webdav` 仍需单独迁移。
 
+制品单元名按用途区分：服务包为 `<module>-service`，Web 静态包为 `<site>-web`，桌面包为 `<product>-desktop`。服务模块名单仍填写运行模块名（如 `chat`），manifest 的 `service_target.module` 将 `chat-service` 映射到 `/opt/deploy/chat`。迁移期会继续识别旧服务包名和已部署的 `chat-standalone-*` 目录；新的发布必须使用 `*-service`。
+
 ## 首次配置
 
 在服务部署节点执行：
@@ -20,7 +22,7 @@ chmod 600 .env
 
 `upgrade-modules.conf` 是已有服务的升级名单，只能填写已经部署且允许参与本轮升级检查的模块。纯静态升级可以不创建该文件，但 `static-units.conf` 必须至少有一条有效站点配置。配置了服务名单时，`upgrade.sh` 仍会检查名单中的每个服务。
 
-`static-units.conf` 每行使用 `repository unit_id site_id health_base_url` 格式。只有在 vhost 已指向 `/opt/deploy/static/<site_id>/current` 且健康 URL 能从该节点访问后，才启用对应行。
+`static-units.conf` 每行使用 `repository unit_id site_id health_base_url` 格式。新配置中的 `unit_id` 以 `-web` 结尾，`site_id` 保持 Nginx 实际站点 ID；迁移期也接受旧 unit 名。只有在 vhost 已指向 `/opt/deploy/static/<site_id>/current` 且健康 URL 能从该节点访问后，才启用对应行。
 
 `.env` 保存本机 WebDAV 凭据和升级行为配置，不要提交到 Git。常用配置项：
 
@@ -79,7 +81,7 @@ bash scripts/upgrade.sh <prepare|copy-config|post-copy|finalize> <current-dir> <
 
 正常情况下每个阶段返回 `0`。只有 `prepare` 可以返回 `10`，表示本次只执行项目定制动作，跳过通用的停止服务、配置迁移、启动服务和健康检查；之后仍会调用 `post-copy`、`finalize`，并更新模块软链接。其他非零退出码都会使该模块升级失败。
 
-通用服务流程依次为：下载并校验制品、解压到 `/opt/deploy/<module>-v...`、执行 `prepare`、优雅停止旧服务并确认进程退出、执行 `copy-config`、执行 `post-copy`、启动新服务、执行 `health-check.sh --level all`（如果目标包提供）、执行 `finalize`、更新软链接，最后尝试备份和上传配置。
+通用服务流程依次为：下载并校验制品、解压到 `/opt/deploy/<module>-service-v...`、执行 `prepare`、优雅停止旧服务并确认进程退出、执行 `copy-config`、执行 `post-copy`、启动新服务、执行 `health-check.sh --level all`（如果目标包提供）、执行 `finalize`、更新 `/opt/deploy/<module>` 软链接，最后尝试备份和上传配置。
 
 当前项目定制行为如下：
 

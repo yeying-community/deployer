@@ -48,42 +48,48 @@ make_fixture() {
     else
         targets='[{"site_id":"main","path":"/opt/deploy/static/main","health_check_path":"/index.html"}]'
     fi
-    jq -n --arg repository "$repository" --arg commit "$commit" --arg version "$version" --arg unit "$unit" --arg type "$type" --arg root "$root" --arg package "$root.tar.gz" --arg sha "$digest" --argjson targets "$targets" '{schema_version:1,repository:$repository,source_commit:$commit,artifacts:[{unit_id:$unit,type:$type,version:$version,package:$package,sha256:$sha,package_root:$root} + (if $type == "static" then {static_targets:$targets} else {} end)]}' > "$fixture/release-manifest.json"
+    jq -n --arg repository "$repository" --arg commit "$commit" --arg version "$version" --arg unit "$unit" --arg type "$type" --arg root "$root" --arg package "$root.tar.gz" --arg sha "$digest" --argjson targets "$targets" '{schema_version:1,repository:$repository,source_commit:$commit,artifacts:[{unit_id:$unit,type:$type,version:$version,package:$package,sha256:$sha,package_root:$root} + (if $type == "static" then {static_targets:$targets} elif $type == "service" then {service_target:{module:$repository,path:("/opt/deploy/"+$repository)}} else {} end)]}' > "$fixture/release-manifest.json"
     printf '%s\n' "$fixture"
 }
 
-fixture=$(make_fixture homepage-api service valid-service)
+fixture=$(make_fixture homepage-api-service service valid-service)
 output=$("$validator" "$fixture/release-manifest.json" --repository homepage --source-commit "$commit" --version "$version") || fail 'valid service manifest'
 [ "$output" = '{"artifacts":1,"repository":"homepage","valid":true}' ] || fail 'stable JSON summary'
 pass 'valid service artifact and expected metadata'
 
 output=$("$validator" "$fixture/release-manifest.json" --artifacts-tsv) || fail 'service TSV output'
-case "$output" in "homepage-api	service	homepage-api-v1.2.3-0123456.tar.gz") ;; *) fail 'service TSV output contents' ;; esac
+case "$output" in "homepage-api-service	service	homepage-api-service-v1.2.3-0123456.tar.gz") ;; *) fail 'service TSV output contents' ;; esac
 pass 'artifact TSV interface'
 
-fixture=$(make_fixture homepage-yeying static valid-static)
+fixture=$(make_fixture homepage-yeying-web static valid-static)
 "$validator" "$fixture/release-manifest.json" >/dev/null || fail 'valid static manifest'
 pass 'valid static artifact and health entry'
 
-mixed_root="homepage-docs-v2.0.0-0123456"
+fixture=$(make_fixture homepage-yeying static legacy-static)
+if "$validator" "$fixture/release-manifest.json" >/dev/null 2>&1; then fail 'legacy static unit accepted for a new release'; fi
+"$validator" "$fixture/release-manifest.json" --allow-legacy-unit-names >/dev/null || fail 'legacy static artifact was not accepted in compatibility mode'
+pass 'legacy static unit accepted only in compatibility mode'
+
+fixture=$(make_fixture homepage-yeying-web static mixed-static)
+mixed_root="homepage-docs-web-v2.0.0-0123456"
 mkdir -p "$fixture/staging/$mixed_root"
 printf '<html>docs</html>\n' > "$fixture/staging/$mixed_root/index.html"
 tar -czf "$fixture/$mixed_root.tar.gz" -C "$fixture/staging" "$mixed_root"
 mixed_digest=$(sha256_file "$fixture/$mixed_root.tar.gz")
 jq --arg root "$mixed_root" --arg package "$mixed_root.tar.gz" --arg sha "$mixed_digest" \
-    '.artifacts += [{unit_id:"homepage-docs",type:"static",version:"2.0.0",package:$package,sha256:$sha,package_root:$root,static_targets:[{site_id:"homepage-docs",path:"/opt/deploy/static/homepage-docs",health_check_path:"/index.html"}]}]' \
+    '.artifacts += [{unit_id:"homepage-docs-web",type:"static",version:"2.0.0",package:$package,sha256:$sha,package_root:$root,static_targets:[{site_id:"homepage-docs",path:"/opt/deploy/static/homepage-docs",health_check_path:"/index.html"}]}]' \
     "$fixture/release-manifest.json" > "$fixture/mixed-versions.json"
 "$validator" "$fixture/mixed-versions.json" --repository homepage --source-commit "$commit" >/dev/null || fail 'mixed artifact versions'
 if "$validator" "$fixture/mixed-versions.json" --version "$version" >/dev/null 2>&1; then fail 'single-version constraint ignored'; fi
 pass 'mixed artifact versions accepted and optional single-version constraint enforced'
 
-desktop_root="wallet-v1.2.3-0123456"
+desktop_root="wallet-desktop-v1.2.3-0123456"
 mkdir -p "$fixture/desktop/$desktop_root"
 printf '{"manifest_version":3}\n' > "$fixture/desktop/$desktop_root/manifest.json"
-(cd "$fixture/desktop" && zip -qry "$fixture/wallet-v1.2.3-0123456.zip" "$desktop_root")
-desktop_digest=$(sha256_file "$fixture/wallet-v1.2.3-0123456.zip")
+(cd "$fixture/desktop" && zip -qry "$fixture/wallet-desktop-v1.2.3-0123456.zip" "$desktop_root")
+desktop_digest=$(sha256_file "$fixture/wallet-desktop-v1.2.3-0123456.zip")
 jq -n --arg commit "$commit" --arg root "$desktop_root" --arg package "$desktop_root.zip" --arg sha "$desktop_digest" \
-    '{schema_version:1,repository:"wallet",source_commit:$commit,artifacts:[{unit_id:"wallet",type:"desktop",version:"1.2.3",package:$package,sha256:$sha,package_root:$root}]}' \
+    '{schema_version:1,repository:"wallet",source_commit:$commit,artifacts:[{unit_id:"wallet-desktop",type:"desktop",version:"1.2.3",package:$package,sha256:$sha,package_root:$root}]}' \
     > "$fixture/desktop-manifest.json"
 "$validator" "$fixture/desktop-manifest.json" --repository wallet --source-commit "$commit" >/dev/null || fail 'valid desktop ZIP artifact'
 pass 'valid desktop ZIP artifact'
@@ -100,38 +106,38 @@ jq '.artifacts[0].static_targets[0].path = "/opt/deploy/static/../etc"' "$fixtur
 if "$validator" "$fixture/traversal-target.json" >/dev/null 2>&1; then fail 'static path traversal accepted'; fi
 pass 'static deployment path traversal rejected'
 
-fixture=$(make_fixture homepage-yeying static traversal)
+fixture=$(make_fixture homepage-yeying-web static traversal)
 if "$validator" "$fixture/release-manifest.json" >/dev/null 2>&1; then fail 'archive traversal accepted'; fi
 pass 'archive path traversal rejected'
 
-fixture=$(make_fixture homepage-api service checksum)
-printf 'tamper' >> "$fixture/homepage-api-v1.2.3-0123456.tar.gz"
+fixture=$(make_fixture homepage-api-service service checksum)
+printf 'tamper' >> "$fixture/homepage-api-service-v1.2.3-0123456.tar.gz"
 if "$validator" "$fixture/release-manifest.json" >/dev/null 2>&1; then fail 'checksum mismatch accepted'; fi
 pass 'package digest mismatch rejected'
 
-fixture=$(make_fixture homepage-api service duplicate)
+fixture=$(make_fixture homepage-api-service service duplicate)
 jq '.artifacts += [.artifacts[0]]' "$fixture/release-manifest.json" > "$fixture/duplicate.json"
 if "$validator" "$fixture/duplicate.json" >/dev/null 2>&1; then fail 'duplicate unit accepted'; fi
 pass 'duplicate unit rejected'
 
-fixture=$(make_fixture homepage-yeying static duplicate-site)
-second_root="homepage-docs-v${version}-0123456"
+fixture=$(make_fixture homepage-yeying-web static duplicate-site)
+second_root="homepage-docs-web-v${version}-0123456"
 mkdir -p "$fixture/staging/$second_root"
 printf '<html>docs</html>\n' > "$fixture/staging/$second_root/index.html"
 tar -czf "$fixture/$second_root.tar.gz" -C "$fixture/staging" "$second_root"
 second_digest=$(sha256_file "$fixture/$second_root.tar.gz")
-jq --arg unit homepage-docs --arg root "$second_root" --arg package "$second_root.tar.gz" --arg sha "$second_digest" \
+jq --arg unit homepage-docs-web --arg root "$second_root" --arg package "$second_root.tar.gz" --arg sha "$second_digest" \
     '.artifacts += [(.artifacts[0] | .unit_id=$unit | .package=$package | .package_root=$root | .sha256=$sha)]' \
     "$fixture/release-manifest.json" > "$fixture/duplicate-site.json"
 if "$validator" "$fixture/duplicate-site.json" >/dev/null 2>&1; then fail 'duplicate static site deployment directory accepted'; fi
 pass 'static site IDs unique across artifacts'
 
-fixture=$(make_fixture homepage-api service malformed)
+fixture=$(make_fixture homepage-api-service service malformed)
 jq '.artifacts[0].type = []' "$fixture/release-manifest.json" > "$fixture/malformed.json"
 if "$validator" "$fixture/malformed.json" >/dev/null 2>&1; then fail 'invalid field type accepted'; fi
 pass 'schema field types rejected'
 
-fixture=$(make_fixture homepage-api service missing-entry)
+fixture=$(make_fixture homepage-api-service service missing-entry)
 if "$validator" "$fixture/release-manifest.json" >/dev/null 2>&1; then fail 'service package without starter accepted'; fi
 pass 'required service entry rejected when missing'
 
@@ -146,14 +152,14 @@ fixture=$(make_fixture node service-with-assets unsafe-link)
 if "$validator" "$fixture/release-manifest.json" --repository node --allow-legacy-service-with-assets >/dev/null 2>&1; then fail 'symbolic link escaping package root accepted'; fi
 pass 'symbolic link escaping package root rejected'
 
-fixture=$(make_fixture homepage-api service package-link)
-package_name="homepage-api-v${version}-0123456.tar.gz"
+fixture=$(make_fixture homepage-api-service service package-link)
+package_name="homepage-api-service-v${version}-0123456.tar.gz"
 mv "$fixture/$package_name" "$fixture/real-package.tar.gz"
 ln -s real-package.tar.gz "$fixture/$package_name"
 if "$validator" "$fixture/release-manifest.json" >/dev/null 2>&1; then fail 'package symlink accepted'; fi
 pass 'package path symlink rejected'
 
-fixture=$(make_fixture homepage-yeying static unsafe-link)
+fixture=$(make_fixture homepage-yeying-web static unsafe-link)
 if "$validator" "$fixture/release-manifest.json" >/dev/null 2>&1; then fail 'archive symlink with traversal target accepted'; fi
 pass 'archive symlink traversal target rejected'
 printf 'all package_manifest.sh tests passed\n'
