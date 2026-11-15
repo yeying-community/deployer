@@ -945,7 +945,11 @@ for module_name in "${MODULES[@]}"; do
             "release notes 脚本缺失：${release_notes_script}" \
             "构建产物已生成，但发布通知脚本不存在" \
             "补齐 release notes 脚本后重新生成发布通知"
-    elif ! bash "$release_notes_script" --module "$module_name" 200>&- >> "$LOGFILE" 2>&1; then
+    elif ! bash "$release_notes_script" \
+        --module "$module_name" \
+        --release-tag "$latest_tag" \
+        --source-commit "$source_commit" \
+        200>&- >> "$LOGFILE" 2>&1; then
         log "WARN! release notes script failed for ${module_name}"
         notify_release_notes_failure \
             "$module_name" \
