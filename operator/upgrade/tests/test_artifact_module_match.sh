@@ -30,5 +30,7 @@ if service_artifact_info_from_name chat chat-desktop-v0.0.97-76e5888.zip; then
     printf '%s\n' 'service matcher accepted a desktop artifact' >&2
     exit 1
 fi
+select_latest_service_named_item chat chat-v0.0.97-76e5888.tar.gz chat-service-v0.0.97-76e5888.tar.gz
+[[ "$SELECTED_NAME" == chat-service-v0.0.97-76e5888.tar.gz ]]
 
 printf '%s\n' 'service artifact matching tests passed'

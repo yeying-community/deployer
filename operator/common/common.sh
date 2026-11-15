@@ -280,17 +280,20 @@ select_latest_service_named_item() {
     SELECTED_VERSION=""
     SELECTED_COMMIT=""
     SELECTED_VERSION_KEY=""
-    local item selected_stem=""
+    local item selected_stem="" item_priority selected_priority=0
     for item in "$@"; do
         if ! service_artifact_info_from_name "$module_name" "$item"; then
             continue
         fi
-        if [[ -z "$SELECTED_NAME" || "$PACKAGE_VERSION_KEY" > "$SELECTED_VERSION_KEY" || ( "$PACKAGE_VERSION_KEY" == "$SELECTED_VERSION_KEY" && "$PACKAGE_STEM" > "$selected_stem" ) ]]; then
+        item_priority=0
+        [[ "$(basename "${item%/}")" == "${module_name}-service-v"* ]] && item_priority=1
+        if [[ -z "$SELECTED_NAME" || "$PACKAGE_VERSION_KEY" > "$SELECTED_VERSION_KEY" || ( "$PACKAGE_VERSION_KEY" == "$SELECTED_VERSION_KEY" && ( "$item_priority" -gt "$selected_priority" || ( "$item_priority" -eq "$selected_priority" && "$PACKAGE_STEM" > "$selected_stem" ) ) ) ]]; then
             SELECTED_NAME="$(basename "${item%/}")"
             SELECTED_VERSION="$PACKAGE_VERSION"
             SELECTED_COMMIT="$PACKAGE_COMMIT"
             SELECTED_VERSION_KEY="$PACKAGE_VERSION_KEY"
             selected_stem="$PACKAGE_STEM"
+            selected_priority="$item_priority"
         fi
     done
     [[ -n "$SELECTED_NAME" ]]
