@@ -67,8 +67,8 @@ pass 'valid static artifact and health entry'
 
 fixture=$(make_fixture homepage-yeying static legacy-static)
 if "$validator" "$fixture/release-manifest.json" >/dev/null 2>&1; then fail 'legacy static unit accepted for a new release'; fi
-"$validator" "$fixture/release-manifest.json" --allow-legacy-unit-names >/dev/null || fail 'legacy static artifact was not accepted in compatibility mode'
-pass 'legacy static unit accepted only in compatibility mode'
+if "$validator" "$fixture/release-manifest.json" --allow-legacy-unit-names >/dev/null 2>&1; then fail 'retired legacy naming compatibility flag was accepted'; fi
+pass 'legacy static unit rejected without a compatibility path'
 
 fixture=$(make_fixture homepage-yeying-web static mixed-static)
 mixed_root="homepage-docs-web-v2.0.0-0123456"

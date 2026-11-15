@@ -6,7 +6,7 @@
 
 静态站点统一部署到 `/opt/deploy/static/<site_id>`，Web 服务器 root 指向 `current`，版本包保存在 `releases/`。启用站点前，先将 vhost root 迁移至标准 `current` 目录；warehouse 的 `/usr/share/nginx/html/webdav` 仍需单独迁移。
 
-制品单元名按用途区分：服务包为 `<module>-service`，Web 静态包为 `<site>-web`，桌面包为 `<product>-desktop`。服务模块名单仍填写运行模块名（如 `chat`），manifest 的 `service_target.module` 将 `chat-service` 映射到 `/opt/deploy/chat`。迁移期会继续识别旧服务包名和已部署的 `chat-standalone-*` 目录；新的发布必须使用 `*-service`。
+制品单元名按用途区分：服务包为 `<module>-service`，Web 静态包为 `<site>-web`，桌面包为 `<product>-desktop`。服务模块名单仍填写运行模块名（如 `chat`），manifest 的 `service_target.module` 将 `chat-service` 映射到 `/opt/deploy/chat`。升级器严格按新 unit 名称识别包和版本目录；升级旧部署前需先按新命名迁移当前 release 目录及静态 unit 配置。
 
 ## 首次配置
 
@@ -22,7 +22,7 @@ chmod 600 .env
 
 `upgrade-modules.conf` 是已有服务的升级名单，只能填写已经部署且允许参与本轮升级检查的模块。纯静态升级可以不创建该文件，但 `static-units.conf` 必须至少有一条有效站点配置。配置了服务名单时，`upgrade.sh` 仍会检查名单中的每个服务。
 
-`static-units.conf` 每行使用 `repository unit_id site_id health_base_url` 格式。新配置中的 `unit_id` 以 `-web` 结尾，`site_id` 保持 Nginx 实际站点 ID；迁移期也接受旧 unit 名。只有在 vhost 已指向 `/opt/deploy/static/<site_id>/current` 且健康 URL 能从该节点访问后，才启用对应行。
+`static-units.conf` 每行使用 `repository unit_id site_id health_base_url` 格式。`unit_id` 必须以 `-web` 结尾，`site_id` 保持 Nginx 实际站点 ID。只有在 vhost 已指向 `/opt/deploy/static/<site_id>/current` 且健康 URL 能从该节点访问后，才启用对应行。
 
 `.env` 保存本机 WebDAV 凭据和升级行为配置，不要提交到 Git。常用配置项：
 

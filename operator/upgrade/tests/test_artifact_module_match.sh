@@ -24,8 +24,12 @@ artifact_info_from_name warehouse-web warehouse-web-v0.0.78-24d8afd.tar.gz
 
 service_artifact_info_from_name chat chat-service-v0.0.97-76e5888.tar.gz
 [[ "$PACKAGE_VERSION" == "0.0.97" ]]
-service_artifact_info_from_name chat chat-standalone-v0.0.96-b75eb0d
-[[ "$PACKAGE_VERSION" == "0.0.96" ]]
+service_artifact_info_from_name router router-v0.0.163-b1a9d54
+[[ "$PACKAGE_VERSION" == "0.0.163" ]]
+if service_artifact_info_from_name chat chat-standalone-v0.0.96-b75eb0d; then
+    printf '%s\n' 'service matcher accepted a retired chat-standalone directory' >&2
+    exit 1
+fi
 if service_artifact_info_from_name chat chat-desktop-v0.0.97-76e5888.zip; then
     printf '%s\n' 'service matcher accepted a desktop artifact' >&2
     exit 1

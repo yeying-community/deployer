@@ -496,7 +496,7 @@ upgrade_static_units() {
             overall_status=1
             continue
         fi
-        if ! jq -e --arg unit "$unit_id" --arg web_unit "${unit_id}-web" --arg site "$site_id" '[.artifacts[] | select((.unit_id == $unit or .unit_id == $web_unit) and .type == "static" and any(.static_targets[]; .site_id == $site and .path == ("/opt/deploy/static/" + $site)))] | length == 1' "$manifest_file" >/dev/null 2>&1; then
+        if ! jq -e --arg unit "$unit_id" --arg site "$site_id" '[.artifacts[] | select(.unit_id == $unit and .type == "static" and any(.static_targets[]; .site_id == $site and .path == ("/opt/deploy/static/" + $site)))] | length == 1' "$manifest_file" >/dev/null 2>&1; then
             log "ERROR! ${manifest_name} does not contain the configured static unit/site: ${unit_id}/${site_id}"
             overall_status=1
             continue
@@ -529,10 +529,8 @@ upgrade_static_units() {
             overall_status=1
             continue
         fi
-        artifact_json="$(jq -c --arg unit "$unit_id" --arg web_unit "${unit_id}-web" --arg site "$site_id" '[.artifacts[] | select((.unit_id == $unit or .unit_id == $web_unit) and .type == "static" and any(.static_targets[]; .site_id == $site))][0]' "$manifest_file")"
+        artifact_json="$(jq -c --arg unit "$unit_id" --arg site "$site_id" '[.artifacts[] | select(.unit_id == $unit and .type == "static" and any(.static_targets[]; .site_id == $site))][0]' "$manifest_file")"
         actual_unit_id="$(jq -r '.unit_id' <<< "$artifact_json")"
-        legacy_static_unit="$actual_unit_id"
-        if [[ "$legacy_static_unit" == *-web ]]; then legacy_static_unit="${legacy_static_unit%-web}"; fi
         package_name="$(jq -r '.package' <<< "$artifact_json")"
         target_version="$(jq -r '.version' <<< "$artifact_json")"
         target_root="$(jq -r '.package_root' <<< "$artifact_json")"
@@ -555,7 +553,7 @@ upgrade_static_units() {
                 continue
             fi
             current_root="${current_target#releases/}"
-            if ! artifact_info_from_name "$actual_unit_id" "$current_root" && ! artifact_info_from_name "$legacy_static_unit" "$current_root" && ! artifact_info_from_name "$unit_id" "$current_root"; then
+            if ! artifact_info_from_name "$actual_unit_id" "$current_root"; then
                 log "ERROR! current static package name is invalid for ${unit_id}: ${current_root}"
                 overall_status=1
                 continue
@@ -625,7 +623,7 @@ for module_name in "${MODULES[@]}"; do
     remote_candidates=()
     service_unit="${module_name}-service"
     for remote_name in "${remote_files[@]}"; do
-        if [[ "$remote_name" == "${service_unit}-v"*.tar.gz || "$remote_name" == "${module_name}-v"*.tar.gz || ( "$module_name" == chat && "$remote_name" == chat-standalone-v*.tar.gz ) ]]; then
+        if [[ "$remote_name" == "${service_unit}-v"*.tar.gz ]]; then
             remote_candidates+=("$remote_name")
         fi
     done

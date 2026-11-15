@@ -261,12 +261,9 @@ service_artifact_info_from_name() {
         PACKAGE_SERVICE_MODULE="$module_name"
         return 0
     fi
-    # Keep existing deployments recognizable during the unit-name migration.
+    # Existing deployments that used the bare module name remain readable.
+    # Chat's retired chat-standalone naming is deliberately not accepted.
     if artifact_info_from_name "$module_name" "$base"; then
-        PACKAGE_SERVICE_MODULE="$module_name"
-        return 0
-    fi
-    if [[ "$module_name" == chat ]] && artifact_info_from_name chat-standalone "$base"; then
         PACKAGE_SERVICE_MODULE="$module_name"
         return 0
     fi
