@@ -19,7 +19,7 @@ cleanup_rules:
 
   - path: "/opt/deploy"
     type: "folder"
-    prefix: "chat-v"
+    prefix: "chat-service-v"
     suffix: ""
     keep_count: 5
     sort_by: "mtime"
@@ -47,7 +47,7 @@ cleanup_rules:
 
   - path: "/opt/deploy"
     type: "folder"
-    prefix: "node-v"
+    prefix: "node-service-v"
     suffix: ""
     keep_count: 5
     sort_by: "mtime"
@@ -76,7 +76,7 @@ cleanup_rules:
 
   - path: "/opt/deploy"
     type: "folder"
-    prefix: "router-v"
+    prefix: "router-service-v"
     suffix: ""
     keep_count: 5
     sort_by: "mtime"
@@ -104,7 +104,7 @@ cleanup_rules:
 
   - path: "/opt/deploy"
     type: "folder"
-    prefix: "project-v"
+    prefix: "project-service-v"
     suffix: ""
     keep_count: 5
     sort_by: "mtime"
@@ -132,7 +132,7 @@ cleanup_rules:
 
   - path: "/opt/deploy"
     type: "folder"
-    prefix: "warehouse-v"
+    prefix: "warehouse-service-v"
     suffix: ""
     keep_count: 5
     sort_by: "mtime"
@@ -146,7 +146,7 @@ cleanup_rules:
 
   - path: "/opt/package"
     type: "file"
-    prefix: "wallet-v"
+    prefix: "wallet-desktop-v"
     suffix: ".zip"
     keep_count: 5
     sort_by: "mtime"

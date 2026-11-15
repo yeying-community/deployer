@@ -75,6 +75,13 @@ if ! jq -e --arg unit "$UNIT_RE" --arg ver "$VERSION_RE" --arg commit "$COMMIT_R
         ($a.package | type == "string" and ((if $a.type == "desktop" then endswith(".zip") else endswith(".tar.gz") end)) and (contains("/") | not) and (contains("\\") | not)) and
         ($a.sha256 | type == "string" and test($sha)) and
         ($a.package_root | type == "string" and length > 0 and (contains("/") | not) and (contains("\\") | not)) and
+        (if $a.type == "service" then
+            ($a.unit_id | endswith("-service")) and
+            ($a.service_target | type == "object" and (.module | type == "string" and test($unit)) and (.path | type == "string" and . == ("/opt/deploy/" + $a.service_target.module)))
+        elif $a.type == "static" then
+            ($a.unit_id | endswith("-web"))
+        elif $a.type == "desktop" then ($a.unit_id | endswith("-desktop"))
+        else true end) and
         (if $a.type == "static" then
             ($a.static_targets | type == "array" and length > 0) and
             ([$a.static_targets[].site_id] | unique | length == ($a.static_targets | length)) and

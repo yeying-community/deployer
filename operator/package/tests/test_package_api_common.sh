@@ -16,7 +16,7 @@ package_common_init fixture "$@"
 package_make_root fixture-service
 mkdir -p "$PACKAGE_DIR/scripts"
 for file in starter.sh health-check.sh test.sh; do printf '#!/bin/sh\nexit 0\n' > "$PACKAGE_DIR/scripts/$file"; done
-package_finish_artifact service
+package_finish_artifact service fixture
 package_finish
 BUILD
 chmod +x "$fixture/build.sh"
