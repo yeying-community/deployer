@@ -21,6 +21,7 @@ chmod 600 .env
 - 输入参数：无参数处理全部模块；`--module <模块名>` 仅处理指定模块
 - 配置文件：`release-notes-modules.conf`、`.env`
 - 作用：比较模块 Git 仓库的版本标签与默认远程分支，生成提交和文件变更说明，写入临时/归档文件并发送飞书通知
+- 打包器调用时会传入 `--release-tag` 和 `--source-commit`，按前一发布 tag 的源码提交到本次源码提交生成说明，避免新 tag 创建后默认范围变空
 - 日志文件：`/opt/logs/generate-release-notes.log`
 
 输出先写入 `/tmp/release_notes_<模块名>.md`，随后尝试追加到 `/opt/package/release_notes_<模块名>.md`；相同版本范围不会重复追加。

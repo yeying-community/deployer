@@ -19,8 +19,6 @@ notify_owner=""
 notify_dingtalk_enabled="False"
 notify_feishu_enabled="False"
 
-init_log_file "generate-release-notes.log"
-
 load_env_file() {
   local env_file="$1"
   [[ -f "$env_file" ]] || return 0
@@ -40,6 +38,7 @@ usage() {
 用法:
   ./release_notes.sh
   ./release_notes.sh --module <模块名>
+  ./release_notes.sh --module <模块名> --release-tag <tag> --source-commit <sha>
 
 说明:
   1. 默认从 $MODULES_CONF 读取模块列表（每行一个模块，支持 # 注释）。
@@ -49,7 +48,8 @@ usage() {
      - 否则：使用 最新tag..$DEFAULT_REMOTE 默认分支
   4. 每个模块先写：/tmp/release_notes_<模块名>.md
   5. 然后尝试追加到：$ARCHIVE_DIR/release_notes_<模块名>.md
-  6. 若归档中已存在相同版本范围标题，则跳过追加
+  6. 打包器提供发布 tag 和源码 commit 时，使用前一发布 tag 对应源码到本次源码的范围。
+  7. 若归档中已存在相同版本，则跳过追加
 EOF
 }
 
@@ -142,29 +142,71 @@ resolve_origin_ref() {
 
 resolve_default_range() {
   local repo_dir="$1"
-  local latest_tag latest_tag_commit target_commit
+  local latest_tag latest_tag_source target_commit tag
 
-  mapfile -t semver_tags < <(get_semver_tags "$repo_dir")
+  semver_tags=()
+  while IFS= read -r tag; do
+    [[ -n "$tag" ]] && semver_tags+=("$tag")
+  done < <(get_semver_tags "$repo_dir")
   if [[ "${#semver_tags[@]}" -eq 0 ]]; then
     return 1
   fi
 
   target_ref="$(resolve_origin_ref "$repo_dir")" || return 1
-  latest_tag="${semver_tags[-1]}"
-  latest_tag_commit="$(git -C "$repo_dir" rev-list -n 1 "$latest_tag")"
+  latest_tag="${semver_tags[$((${#semver_tags[@]} - 1))]}"
+  latest_tag_source="$(tag_source_commit "$repo_dir" "$latest_tag")" || return 1
   target_commit="$(git -C "$repo_dir" rev-parse "$target_ref")"
 
-  if [[ "$latest_tag_commit" == "$target_commit" ]]; then
+  if [[ "$latest_tag_source" == "$target_commit" ]]; then
     if [[ "${#semver_tags[@]}" -lt 2 ]]; then
       return 1
     fi
-    old_ref="${semver_tags[-2]}"
-    new_ref="$latest_tag"
+    old_ref="$(tag_source_commit "$repo_dir" "${semver_tags[$((${#semver_tags[@]} - 2))]}")" || return 1
+    new_ref="$latest_tag_source"
+    release_identity="$latest_tag"
   else
-    old_ref="$latest_tag"
+    old_ref="$latest_tag_source"
     new_ref="$target_ref"
+    release_identity="$target_ref"
   fi
   return 0
+}
+
+tag_source_commit() {
+  local repo_dir="$1" tag="$2"
+  local tag_commit source_commit
+  tag_commit="$(git -C "$repo_dir" rev-parse "${tag}^{commit}" 2>/dev/null)" || return 1
+  source_commit="$(git -C "$repo_dir" for-each-ref --format='%(contents:body)' "refs/tags/${tag}" | sed -n 's/^Source-Commit: //p' | head -n 1)"
+  if [[ -z "$source_commit" ]]; then
+    source_commit="$(git -C "$repo_dir" rev-parse "${tag_commit}^" 2>/dev/null || true)"
+  fi
+  [[ "$source_commit" =~ ^[0-9a-f]{40}$ ]] || return 1
+  printf '%s' "$source_commit"
+}
+
+resolve_release_range() {
+  local repo_dir="$1" release_tag="$2" source_commit="$3"
+  local index=-1 previous_source i tag
+  [[ "$release_tag" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || return 1
+  [[ "$source_commit" =~ ^[0-9a-f]{40}$ ]] || return 1
+
+  semver_tags=()
+  while IFS= read -r tag; do
+    [[ -n "$tag" ]] && semver_tags+=("$tag")
+  done < <(get_semver_tags "$repo_dir")
+  for i in "${!semver_tags[@]}"; do
+    if [[ "${semver_tags[$i]}" == "$release_tag" ]]; then
+      index=$i
+      break
+    fi
+  done
+  (( index > 0 )) || return 1
+
+  previous_source="$(tag_source_commit "$repo_dir" "${semver_tags[$((index - 1))]}")" || return 1
+  [[ "$previous_source" != "$source_commit" ]] || return 1
+  old_ref="$previous_source"
+  new_ref="$source_commit"
+  target_ref="$release_tag"
 }
 
 build_raw_payload() {
@@ -409,8 +451,12 @@ append_to_archive() {
   return 0
 }
 
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+init_log_file "generate-release-notes.log"
 modules=()
 single_module=""
+requested_release_tag=""
+requested_source_commit=""
 
 authoring_note
 load_runtime_config
@@ -426,11 +472,26 @@ while [[ $# -gt 0 ]]; do
       single_module="$2"
       shift 2
       ;;
+    --release-tag)
+      [[ $# -ge 2 ]] || fail "--release-tag 缺少参数"
+      requested_release_tag="$2"
+      shift 2
+      ;;
+    --source-commit)
+      [[ $# -ge 2 ]] || fail "--source-commit 缺少参数"
+      requested_source_commit="$2"
+      shift 2
+      ;;
     *)
       fail "未知参数：$1（可用 --help 查看帮助）"
       ;;
   esac
 done
+
+if [[ -n "$requested_release_tag" || -n "$requested_source_commit" ]]; then
+  [[ -n "$single_module" && -n "$requested_release_tag" && -n "$requested_source_commit" ]] || \
+    fail "--release-tag 和 --source-commit 必须与 --module 一起提供"
+fi
 
 if [[ -n "$single_module" ]]; then
   modules=("$single_module")
@@ -457,15 +518,25 @@ for module_name in "${modules[@]}"; do
   old_ref=""
   new_ref=""
   target_ref=""
-  if ! resolve_default_range "$repo_dir"; then
+  release_identity=""
+  if [[ -n "$requested_release_tag" ]]; then
+    if ! resolve_release_range "$repo_dir" "$requested_release_tag" "$requested_source_commit"; then
+      warn "跳过模块 $module_name：无法从发布 tag ${requested_release_tag} 解析前一版本到本次源码的提交范围"
+      failed_count=$((failed_count + 1))
+      continue
+    fi
+    release_identity="$requested_release_tag"
+  elif ! resolve_default_range "$repo_dir"; then
     warn "跳过模块 $module_name：无法推断版本范围（检查本地 $DEFAULT_REMOTE 引用与 tag，规则 TAG_GLOB=$TAG_GLOB）"
     failed_count=$((failed_count + 1))
     continue
+  else
+    release_identity="${release_identity:-$new_ref}"
   fi
 
   summary_heading="【$NOTIFY_TYPE】${module_name} 已发布"
-  if archive_has_range "$archive_file" "$NOTIFY_TYPE" "$new_ref"; then
-    log "模块 $module_name 的概要信息已存在，跳过重新生成：[$NOTIFY_TYPE] $new_ref"
+  if archive_has_range "$archive_file" "$NOTIFY_TYPE" "$release_identity"; then
+    log "模块 $module_name 的概要信息已存在，跳过重新生成：[$NOTIFY_TYPE] $release_identity"
     continue
   fi
 
@@ -479,14 +550,14 @@ for module_name in "${modules[@]}"; do
 
   printf '%s' "$raw_report" > "$raw_tmp_file"
   ensure_codex_requirements_checked
-  if ! run_codex "$repo_dir" "$raw_tmp_file" "$final_tmp_file" "$summary_heading" "$new_ref"; then
+  if ! run_codex "$repo_dir" "$raw_tmp_file" "$final_tmp_file" "$summary_heading" "$release_identity"; then
     warn "模块 $module_name：Codex 生成失败"
     failed_count=$((failed_count + 1))
     continue
   fi
 
  
-  if ! append_to_archive "$final_tmp_file" "$archive_file" "$summary_heading" "$NOTIFY_TYPE" "$new_ref"; then
+  if ! append_to_archive "$final_tmp_file" "$archive_file" "$summary_heading" "$NOTIFY_TYPE" "$release_identity"; then
     warn "模块 $module_name：追加到归档失败（$archive_file）"
     failed_count=$((failed_count + 1))
     continue
@@ -515,3 +586,4 @@ if [[ "$failed_count" -gt 0 ]]; then
 fi
 
 log "全部模块处理完成。"
+fi
