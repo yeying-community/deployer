@@ -228,7 +228,19 @@ for repository in "${repositories[@]}"; do
         continue
     fi
 
+    repository_pathspecs=()
+    for index in "${!pathspec_repositories[@]}"; do
+        [[ "${pathspec_repositories[$index]}" == "$repository" ]] && repository_pathspecs+=("${pathspec_values[$index]}")
+    done
+    if [[ ${#repository_pathspecs[@]} -eq 0 ]]; then
+        log "ERROR! no pathspecs configured for ${repository}"
+        overall_status=1
+        continue
+    fi
+
     pending_file="${state_dir}/${repository}.pending"
+    state_file="${state_dir}/${repository}.source"
+    baseline=""
     if [[ -f "$pending_file" ]]; then
         pending_tag=$(sed -n '1p' "$pending_file")
         pending_source=$(sed -n '2p' "$pending_file")
@@ -244,18 +256,36 @@ for repository in "${repositories[@]}"; do
             log "cleared completed automatic release marker for ${repository}: ${pending_tag}"
             continue
         fi
-        selected_repositories+=("$repository")
-        selected_tags+=("${repository}:${pending_tag}")
-        log "retrying pending automatic release for ${repository}: ${pending_tag} from ${pending_source}"
-        continue
+        if git -C "$repository_dir" diff --quiet "$pending_source" "$remote_commit" -- "${repository_pathspecs[@]}"; then
+            selected_repositories+=("$repository")
+            selected_tags+=("${repository}:${pending_tag}")
+            log "retrying pending automatic release for ${repository}: ${pending_tag} from ${pending_source}"
+            continue
+        else
+            diff_status=$?
+            if [[ "$diff_status" -ne 1 ]]; then
+                log "ERROR! git diff failed while checking changes after pending source for ${repository}"
+                overall_status=1
+                continue
+            fi
+        fi
+        if [[ "$check_only" -eq 0 ]]; then
+            write_source_state "$repository" "$pending_source" || {
+                log "ERROR! unable to advance checkpoint past superseded pending release for ${repository}"
+                overall_status=1
+                continue
+            }
+            rm -f "$pending_file"
+        fi
+        baseline="$pending_source"
+        log "superseding pending automatic release for ${repository}: ${pending_tag} from ${pending_source}; configured inputs changed through ${remote_commit}"
     fi
 
-    state_file="${state_dir}/${repository}.source"
-    if [[ ! -f "$state_file" ]]; then
+    if [[ -z "$baseline" && ! -f "$state_file" ]]; then
         log "WARN! automatic package checkpoint is not initialized for ${repository}; run auto_package.sh --initialize ${repository}"
         continue
     fi
-    baseline=$(cat "$state_file")
+    [[ -n "$baseline" ]] || baseline=$(cat "$state_file")
     if [[ ! "$baseline" =~ ^[0-9a-f]{40}$ ]] || ! git -C "$repository_dir" cat-file -e "${baseline}^{commit}" 2>/dev/null; then
         log "ERROR! invalid automatic package checkpoint for ${repository}: ${state_file}"
         overall_status=1
@@ -263,16 +293,6 @@ for repository in "${repositories[@]}"; do
     fi
     if ! git -C "$repository_dir" merge-base --is-ancestor "$baseline" "$remote_commit"; then
         log "ERROR! origin/main history no longer contains checkpoint ${baseline} for ${repository}; manual review required"
-        overall_status=1
-        continue
-    fi
-
-    repository_pathspecs=()
-    for index in "${!pathspec_repositories[@]}"; do
-        [[ "${pathspec_repositories[$index]}" == "$repository" ]] && repository_pathspecs+=("${pathspec_values[$index]}")
-    done
-    if [[ ${#repository_pathspecs[@]} -eq 0 ]]; then
-        log "ERROR! no pathspecs configured for ${repository}"
         overall_status=1
         continue
     fi
