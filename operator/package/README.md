@@ -157,7 +157,7 @@ journalctl -u deployer-auto-package.service -n 100 --no-pager
 tail -n 100 /opt/logs/auto-package.log
 ```
 
-自动任务与人工发布共用编译锁，避免并发。无相关变更时只推进该仓库检查点；有相关变更时只发布受影响仓库。成功上传 manifest 后才推进检查点。失败 tag 保存在 `/var/lib/deployer-auto-package/<repository>.pending` 并在下轮复用；若进程在创建 tag 后退出，下一轮会根据 tag 的 `Source-Commit` 恢复重试。
+自动任务与人工发布共用编译锁，避免并发。无相关变更时只推进该仓库检查点；有相关变更时只发布受影响仓库。成功上传 manifest 后才推进检查点。失败 tag 保存在 `/var/lib/deployer-auto-package/<repository>.pending` 并在下轮复用；若进程在创建 tag 后退出，下一轮会根据 tag 的 `Source-Commit` 恢复重试。如果该 tag 发布失败期间，受监控的构建输入又发生了新变化，自动任务会保留旧源码作为检查点并用新源码创建后续发布；新包包含完整源码历史变更，日志会记录被替代的 pending tag。`--check` 只报告这一决定，不改动检查点或 pending 文件。
 
 该任务只构建、校验并上传制品，不运行 `upgrade.sh`。若测试环境有轮询升级任务，上传后测试环境可能自动升级；生产升级仍需在部署节点独立执行。暂停定时发布：
 

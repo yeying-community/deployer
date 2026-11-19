@@ -138,4 +138,27 @@ run_auto
 [[ "$(wc -l < "$tmp_dir/calls.log" | tr -d ' ')" == 3 ]]
 [[ "$(tail -n 1 "$tmp_dir/calls.log")" == *"--tag router:v1.2.4"* ]]
 
+# A newer configured input supersedes a failed pending tag, while check-only
+# reports the action without changing the checkpoint or pending marker.
+printf 'package main\n// pending release source\n' >> "$tmp_dir/code/router/src/main.go"
+git -C "$tmp_dir/code/router" commit -am pending-release-source >/dev/null
+publish_repository_refs router
+pending_source=$(git -C "$tmp_dir/code/router" rev-parse refs/remotes/origin/main)
+printf 'v1.2.5\n%s\n' "$pending_source" > "$tmp_dir/state/router.pending"
+printf 'package main\n// newer source\n' >> "$tmp_dir/code/router/src/main.go"
+git -C "$tmp_dir/code/router" commit -am newer-source >/dev/null
+publish_repository_refs router
+newer_source=$(git -C "$tmp_dir/code/router" rev-parse refs/remotes/origin/main)
+checkpoint_before_check=$(cat "$tmp_dir/state/router.source")
+run_auto --check > "$tmp_dir/check.log"
+[[ "$(cat "$tmp_dir/state/router.source")" == "$checkpoint_before_check" ]]
+[[ "$(sed -n '1p' "$tmp_dir/state/router.pending")" == v1.2.5 ]]
+grep -q 'superseding pending automatic release for router: v1.2.5' "$tmp_dir/check.log"
+run_auto > "$tmp_dir/supersede.log"
+[[ "$(wc -l < "$tmp_dir/calls.log" | tr -d ' ')" == 4 ]]
+[[ "$(tail -n 1 "$tmp_dir/calls.log")" != *"--tag router:v1.2.5"* ]]
+[[ "$(cat "$tmp_dir/state/router.source")" == "$newer_source" ]]
+[[ ! -e "$tmp_dir/state/router.pending" ]]
+grep -q 'superseding pending automatic release for router: v1.2.5' "$tmp_dir/supersede.log"
+
 printf 'automatic package change detection tests passed\n'
