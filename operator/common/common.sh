@@ -213,11 +213,21 @@ for elem in root.iter():
 artifact_info_from_name() {
     local module_name=$1
     local item=${2%/}
-    local base rest version_tag version commit major minor patch prefix
+    local base rest version_tag version commit major minor patch prefix adaptation_suffix=""
 
     base=$(basename "$item")
     if [[ "$base" == *.tar.gz ]]; then
         base=${base%.tar.gz}
+    else
+        # Tester releases may contain a host-overlay suffix after the normal
+        # package identity, for example
+        # tester-service-v0.1.6-9865d39-host57a529489391-shell.  The suffix is
+        # deployment provenance, not part of the release commit.  Accept it
+        # only for directory names so remote artifact names remain strict.
+        if [[ "$base" =~ ^(.*-[0-9A-Za-z]{7})(-host[0-9A-Za-z]+([-][0-9A-Za-z]+)*)$ ]]; then
+            base=${BASH_REMATCH[1]}
+            adaptation_suffix=${BASH_REMATCH[2]}
+        fi
     fi
 
     if [[ "$base" != "${module_name}-"* ]]; then
@@ -250,6 +260,7 @@ artifact_info_from_name() {
     PACKAGE_VERSION="$version"
     PACKAGE_COMMIT="$commit"
     PACKAGE_STEM="$base"
+    PACKAGE_ADAPTATION_SUFFIX="$adaptation_suffix"
     printf -v PACKAGE_VERSION_KEY '%09d%09d%09d' "$major" "$minor" "$patch"
     return 0
 }
