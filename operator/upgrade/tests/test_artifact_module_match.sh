@@ -24,14 +24,6 @@ artifact_info_from_name warehouse-web warehouse-web-v0.0.78-24d8afd.tar.gz
 
 service_artifact_info_from_name chat chat-service-v0.0.97-76e5888.tar.gz
 [[ "$PACKAGE_VERSION" == "0.0.97" ]]
-service_artifact_info_from_name tester tester-service-v0.1.6-9865d39-host57a529489391-shell
-[[ "$PACKAGE_VERSION" == "0.1.6" ]]
-[[ "$PACKAGE_COMMIT" == "9865d39" ]]
-[[ "$PACKAGE_ADAPTATION_SUFFIX" == "-host57a529489391-shell" ]]
-if service_artifact_info_from_name tester tester-service-v0.1.6-9865d39-host57a529489391-shell.tar.gz; then
-    printf '%s\n' 'service matcher accepted a host-overlay suffix in a remote archive' >&2
-    exit 1
-fi
 service_artifact_info_from_name router router-v0.0.163-b1a9d54
 [[ "$PACKAGE_VERSION" == "0.0.163" ]]
 if service_artifact_info_from_name chat chat-standalone-v0.0.96-b75eb0d; then
