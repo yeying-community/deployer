@@ -103,8 +103,49 @@ format_sar_missing_alert() {
 EOF
 }
 
+get_top_processes() {
+    local resource=$1 sort_field process_lines
+
+    case "$resource" in
+        cpu) sort_field="-%cpu" ;;
+        memory) sort_field="-%mem" ;;
+        *) printf '进程信息获取失败：未知排序类型\n'; return 0 ;;
+    esac
+
+    if ! command -v ps >/dev/null 2>&1; then
+        printf '进程信息获取失败：ps 命令不存在\n'
+        return 0
+    fi
+
+    if ! process_lines=$(LC_ALL=C ps -eo pid,user,pcpu,pmem,args --sort="$sort_field" 2>/dev/null | awk '
+        NR > 1 && count < 2 {
+            pid = $1
+            user = $2
+            cpu = $3
+            memory = $4
+            $1 = $2 = $3 = $4 = ""
+            sub(/^[[:space:]]+/, "")
+            if ($0 ~ /^(ps|awk)([[:space:]]|$)/) next
+            command = substr($0, 1, 180)
+            if (length($0) > 180) command = command "..."
+            printf "%-8s %-12s %6s %6s %s\n", pid, user, cpu, memory, command
+            count++
+        }
+    '); then
+        printf '进程信息获取失败：ps 命令执行失败\n'
+        return 0
+    fi
+
+    if [[ -z "$process_lines" ]]; then
+        printf '进程信息获取失败：未获取到进程记录\n'
+        return 0
+    fi
+
+    printf 'PID      USER             %%CPU   %%MEM  COMMAND\n%s' "$process_lines"
+}
+
 check_memory() {
-    local available_kb available_mb
+    local available_kb available_mb top_processes
 
     if ! available_kb=$(awk '/^MemAvailable:/ { print $2; found = 1; exit } END { if (!found) exit 1 }' /proc/meminfo); then
         log "ERROR! failed to read MemAvailable from /proc/meminfo"
@@ -123,10 +164,13 @@ check_memory() {
     fi
 
     log "available memory is below the alert threshold, sending notification"
+    top_processes=$(get_top_processes memory)
     notify_feishu "$(format_resource_alert \
         "主机内存告警" \
         "- 可用内存：${available_mb} MB
-- 告警阈值：${memory_available_threshold_mb} MB" \
+- 告警阈值：${memory_available_threshold_mb} MB
+- 内存占用最高进程：
+${top_processes}" \
         "节点可用内存不足" \
         "检查并释放内存，或扩容节点")"
 }
@@ -138,7 +182,7 @@ check_cpu() {
         return 0
     fi
 
-    local sar_output idle_percent cpu_usage
+    local sar_output idle_percent cpu_usage top_processes
     if ! sar_output=$(LC_ALL=C sar -u 1 5 2>&1); then
         log "ERROR! failed to collect CPU usage with sar: ${sar_output}"
         notify_feishu "$(format_resource_alert \
@@ -171,10 +215,13 @@ check_cpu() {
     fi
 
     log "CPU usage exceeds the alert threshold, sending notification"
+    top_processes=$(get_top_processes cpu)
     notify_feishu "$(format_resource_alert \
         "主机 CPU 使用率告警" \
         "- CPU 使用率（5 秒平均）：${cpu_usage}%
-- 告警阈值：${cpu_usage_threshold}%" \
+- 告警阈值：${cpu_usage_threshold}%
+- CPU 占用最高进程：
+${top_processes}" \
         "节点 CPU 使用率过高" \
         "检查 CPU 高占用进程并评估节点负载")"
 }
